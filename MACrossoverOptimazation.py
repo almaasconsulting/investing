@@ -1,4 +1,4 @@
-
+"""Optimal MA crossover strategy testing including dividends."""
 import pandas_datareader.data as web
 import pandas as pd
 import datetime
@@ -8,9 +8,9 @@ import time
 import os
 import sys
 # User created modules
-import TradeSimulatorFunctions as tsf
+import MACrossoverFunctions as macf
 import YahooDataReader as ydr
-"""Optimal MA crossover strategy testing including dividends."""
+
 """It should do the following:
     1) Create 40 different Exponential Moving Average ( from 5 to 200 with
        step size = 5)
@@ -26,7 +26,7 @@ import YahooDataReader as ydr
        dividend value paid.
 
 """
-debug = True
+debug = False
 
 stock = "ASC.OL"
 start = datetime.datetime(2006, 1, 1)
@@ -70,14 +70,23 @@ try:
         print(emaList[3])
         print("emaList[1][2826] is %f" % (emaList[1][2826]))
         print("emaList[3][2826] is %f" % (emaList[3][2826]))
+
     # Fetch the dividend data and sort it in correct order
     # Now fetch all dividend data for the given stock
     dividendData = ydr.yahooFinanceDataReader([stock],
                                               [1, 1, 2000, 31, 12, 2020], [],
                                               "dividend")
+
     # Sort the data such that the dividends are from start to end
     dividendData.sort(key=lambda x: x[0])
     # Now all the required data is aqquired for doing the tests.
+    for i in range(0, 1):
+        v = i+1
+        for j in range(v, 2):
+            print(type(emaList[j]))
+            tradingData = macf.computeMACrossOver(closeList, emaList[i], emaList[j])
+            print("size tradingData: %i" % (len(tradingData)))
+
     list1 = emaList[0]
     print(len(list1))
 
@@ -85,3 +94,7 @@ except Exception as e:
     exc_type, exc_obj, exc_tb = sys.exc_info()
     fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
     print(exc_type, fname, exc_tb.tb_lineno)
+# Done writing to excel -> Close the file
+print('****** Done writing to Worksheet ******')
+workbook.close()
+print('****** Closed Workbook ******')

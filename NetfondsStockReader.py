@@ -2,7 +2,7 @@
 
 import csv
 import urllib.request
-import io
+
 
 def readStockListData(url):
     stockList = []
@@ -16,8 +16,9 @@ def readStockListData(url):
             itemList = row[0].split('\t')
             print(itemList[1])
             stockList.append(itemList[1] + '.OL')
-    print(stockList)
+    # print(stockList)
     return stockList
+
 
 def createStockList():
     url_OAX = 'http://hopey.netfonds.no/kurs.php?exchange=OAX&sec_types=&sectors=&ticks=&table=tab&sort=alphabetic'
