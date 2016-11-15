@@ -14,7 +14,7 @@ Date:           Init:       Comment:
                             dataParameters for storing symbols for fundamental
                             information.
 """
-debug = True
+debug = False
 
 
 def yahooFinanceDataReader(ticker, period, dataParameters, type):
@@ -71,7 +71,6 @@ def yahooFinanceDataReader(ticker, period, dataParameters, type):
                 if debug:
                     for row in dataWithoutHeaders:
                         print(row)
-                print("FFF")
                 return dataWithoutHeaders
             else:
                 return False

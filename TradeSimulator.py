@@ -58,22 +58,26 @@ try:
     print(list(f.columns.values))
     print('****** Create Moving Average Data ******')
     closeList = pd.Series(f['Adj Close'])
-    ema15 = pd.ewma(f['Adj Close'], span=15)
-    ema30 = pd.ewma(f['Adj Close'], span=30)
-    ema40 = pd.ewma(f['Adj Close'], span=40)
-    ema50 = pd.ewma(f['Adj Close'], span=50)
-    ema100 = pd.ewma(f['Adj Close'], span=100)
-    ema200 = pd.ewma(f['Adj Close'], span=200)
+    ema65 = pd.ewma(f['Adj Close'], span=65)
+    ema70 = pd.ewma(f['Adj Close'], span=70)
+    ema75 = pd.ewma(f['Adj Close'], span=75)
+    ema145 = pd.ewma(f['Adj Close'], span=145)
+    ema155 = pd.ewma(f['Adj Close'], span=155)
+    ema165 = pd.ewma(f['Adj Close'], span=165)
     # Call function for computing 52 low
-    sameList = pd.concat([closeList, ema15, ema30, ema40, ema50, ema100, ema200], axis=1)
+    sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema155,
+                          ema165], axis=1)
 
-    sameList.columns = ['Close', 'ema 15', 'ema 30', 'ema 40', 'ema 50', 'ema 100', 'ema 200']
+    sameList.columns = ['Close', 'ema 65', 'ema 70', 'ema 75', 'ema 145',
+                        'ema 155', 'ema 165']
     print('****** Done Creating Moving Average Data ******')
 
     # print(sameList.iloc[[2]])
     # Create an array of MA's to Test
-    maTestList = ['ema 15', 'ema 30', 'ema 40', 'ema 50', 'ema 100', 'ema 200']
-    trades52WL = tsf.compute52WLTrades(sameList, 'Close', maTestList[1], maTestList[3])
+    maTestList = ['ema 65', 'ema 70', 'ema 75', 'ema 145', 'ema 155',
+                  'ema 165']
+    trades52WL = tsf.compute52WLTrades(sameList, 'Close', maTestList[1],
+                                       maTestList[4])
     # print(trades52WL)
     for item in trades52WL:
         # Now write the data to excel
@@ -130,12 +134,13 @@ workbook.close()
 print('****** Closed Workbook ******')
 # print(sameList)
 plt.plot(sameList['Close'], label='Close')
-plt.plot(sameList['ema 15'], label='ema15')
-plt.plot(sameList['ema 30'], label='ema30')
-plt.plot(sameList['ema 50'], label='ema50')
-plt.plot(sameList['ema 100'], label='ema100')
-plt.plot(sameList['ema 200'], label='ema200')
+plt.plot(sameList['ema 65'], label='ema65')
+plt.plot(sameList['ema 70'], label='ema70')
+plt.plot(sameList['ema 75'], label='ema75')
+plt.plot(sameList['ema 145'], label='ema145')
+plt.plot(sameList['ema 155'], label='ema155')
+plt.plot(sameList['ema 165'], label='ema165')
 legend = plt.legend(loc='upper center', shadow=True, fontsize='x-large')
-# plt.show()
+plt.show()
 
 # print(f)

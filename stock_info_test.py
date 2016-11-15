@@ -36,7 +36,7 @@ worksheet.write(row, col + 8, "Tot value")
 stockList = nsr.createStockList()
 
 nr = 0
-stockList = ["STL.OL"]
+stockList = ["T"]
 for stock in stockList:
     nr = nr + 1
     print("Testing stock %s -> nr %i of %i" % (stock, nr, len(stockList)))
@@ -45,37 +45,34 @@ for stock in stockList:
         print(list(f.columns.values))
         print('****** Create Moving Average Data ******')
         closeList = pd.Series(f['Adj Close'])
-        ema15 = pd.ewma(f['Adj Close'], span=15)
-        ema30 = pd.ewma(f['Adj Close'], span=30)
-        ema40 = pd.ewma(f['Adj Close'], span=40)
-        ema50 = pd.ewma(f['Adj Close'], span=50)
-        ema100 = pd.ewma(f['Adj Close'], span=100)
-        # ema200 = closeList.ewm(f['Close'], span=200, min_periods=0, ignore_na=False, adjust=True ).mean()
-        ema200 = pd.ewma(f['Adj Close'], span=200)
-        # Call function for computing 52 WL
-        # print(closeList)
-        # print(closeList[0])
-        sameList = pd.concat([closeList, ema15, ema30, ema40, ema50, ema100, ema200], axis=1)
+        ema65 = pd.ewma(f['Adj Close'], span=65)
+        ema70 = pd.ewma(f['Adj Close'], span=70)
+        ema75 = pd.ewma(f['Adj Close'], span=75)
+        ema145 = pd.ewma(f['Adj Close'], span=145)
+        ema155 = pd.ewma(f['Adj Close'], span=155)
+        ema165 = pd.ewma(f['Adj Close'], span=165)
+        # Call function for computing 52 low
+        sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema155,
+                              ema165], axis=1)
 
-        # print(sameList[1])
-        # ema15List = list(ema15.columns.values)
-        # print(ema15List)
-        sameList.columns = ['Close', 'ema 15', 'ema 30', 'ema 40','ema 50', 'ema 100', 'ema 200']
+        sameList.columns = ['Close', 'ema 65', 'ema 70', 'ema 75', 'ema 145',
+                            'ema 155', 'ema 165']
         print('****** Done Creating Moving Average Data ******')
 
         # print(sameList.iloc[[2]])
         # Create an array of MA's to Test
-        maTestList = ['ema 15', 'ema 30', 'ema 40', 'ema 50', 'ema 100', 'ema 200']
+        maTestList = ['ema 65', 'ema 70', 'ema 75', 'ema 145', 'ema 155',
+                      'ema 165']
 
         pos = 0
         j = 0
         k = 0
         # for pos in range(1,len(maTestList)-1):
             # for j in range(pos+1, len(maTestList)):
-        for pos in range(0, 2):
-            for j in range(pos+1, 3):
+        for pos in range(0, 5):
+            for j in range(pos+1, 6):
                 value52WL = tam.compute52WLPoints(sameList, 'Close', maTestList[pos], maTestList[j])
-                # valueMACross = tam.computeMACrossOver(sameList, 'Close', maTestList[pos], maTestList[j])
+                valueMACross = tam.computeMACrossOver(sameList, 'Close', maTestList[pos], maTestList[j])
                 # valueGuppy = tam.computeGuppyMACrossOver(sameList, 'Close', 'ema 15', 'ema 30', 'ema 40')
                 # Now write the data to excel
                 # First ' 52 Week Low'
@@ -100,21 +97,12 @@ for stock in stockList:
                 worksheet.write(row, col + 6, valueMACross[2])
                 worksheet.write(row, col + 7, valueMACross[3])
                 worksheet.write(row, col + 8, valueMACross[4])
-    except:
-        print("Unexpected error:", sys.exc_info()[0])
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print(exc_type, fname, exc_tb.tb_lineno)
 
 # Done writing to excel -> Close the file
 print('****** Done writing to Worksheet ******')
 workbook.close()
 print('****** Closed Workbook ******')
-# print(sameList)
-plt.plot(sameList['Close'], label='Close')
-plt.plot(sameList['ema 15'], label='ema15')
-plt.plot(sameList['ema 30'], label='ema30')
-plt.plot(sameList['ema 50'], label='ema50')
-plt.plot(sameList['ema 100'], label='ema100')
-plt.plot(sameList['ema 200'], label='ema200')
-legend = plt.legend(loc='upper center', shadow=True, fontsize='x-large')
-# plt.show()
-
-# print(f)

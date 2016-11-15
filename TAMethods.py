@@ -1,5 +1,5 @@
 """TAMethods.py"""
-debug = True
+debug = False
 
 def computeGuppyMACrossOver(data, colname, MA_Low, MA_Medium, MA_High):
     # print(data.iloc[[2]])
@@ -9,10 +9,7 @@ def computeGuppyMACrossOver(data, colname, MA_Low, MA_Medium, MA_High):
     itemsMALow = data[MA_Low].values.tolist()
     itemsMAMedium = data[MA_Medium].values.tolist()
     itemsMAHigh = data[MA_High].values.tolist()
-    # GET SIZE OF data
-    print(len(data.index))
-    # print(items)
-    # print(items[2295:2298])
+
     pos = 0
     period = 20
     start = 0
@@ -40,13 +37,15 @@ def computeGuppyMACrossOver(data, colname, MA_Low, MA_Medium, MA_High):
                 skip = skip_period
         skip = skip - 1
         pos = pos + 1
-    print('*'*80)
+
     value_today = float(antall) * items[len(data.index) - 1]
-    print("Total trades performed: %i" % (nr_of_trades))
-    print("Portfolio size is: %i" % (antall))
-    print("Value today: %d and total invested is: %f" % (value_today, sum_invested))
-    print("Gain before dividends: %2.2f percent" % ((value_today - sum_invested)*100/sum_invested))
-    print('*'*80)
+    if debug:
+        print('*'*80)
+        print("Total trades performed: %i" % (nr_of_trades))
+        print("Portfolio size is: %i" % (antall))
+        print("Value today: %d and total invested is: %f" % (value_today, sum_invested))
+        print("Gain before dividends: %2.2f percent" % ((value_today - sum_invested)*100/sum_invested))
+        print('*'*80)
 
 
 def computeMACrossOver(data, colname, MA_Low, MA_High):
@@ -57,10 +56,9 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
     itemsMALow = data[MA_Low].values.tolist()
     itemsMAHigh = data[MA_High].values.tolist()
     # GET SIZE OF data
-    print(len(data.index))
-    print(data)
-    # print(items)
-    # print(items[2295:2298])
+    if debug:
+        print(len(data.index))
+        print(data)
     pos = 0
     period  = 20
     start = 0
@@ -88,16 +86,18 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
                 skip = skip_period
         skip = skip - 1
         pos = pos + 1
-    print('*'*80)
+
     value_today = float(antall) * items[len(data.index) - 1]
     gain_percent = 0
     if sum_invested > 0:
         gain_percent = (value_today - sum_invested)*100/sum_invested
-    print("Total trades performed: %i" %(nr_of_trades))
-    print("Portfolio size is: %i" %(antall))
-    print("Value today: %d and total invested is: %f" % (value_today, sum_invested))
-    print("Gain before dividends: %2.2f percent" % (gain_percent))
-    print('*'*80)
+    if debug:
+        print('*'*80)
+        print("Total trades performed: %i" %(nr_of_trades))
+        print("Portfolio size is: %i" %(antall))
+        print("Value today: %d and total invested is: %f" % (value_today, sum_invested))
+        print("Gain before dividends: %2.2f percent" % (gain_percent))
+
     return [nr_of_trades, antall, gain_percent, sum_invested, value_today]
 """
  This function computes profit for a strategy to trade at 52 Week Low

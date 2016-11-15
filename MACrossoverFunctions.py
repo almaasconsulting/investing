@@ -3,6 +3,8 @@
  It is not including dividends in the strategy
 """
 debug = False
+
+
 def computeMACrossOver(data, MA_Low, MA_High):
     items = data.values.tolist()
     itemsMALow = MA_Low
@@ -15,19 +17,17 @@ def computeMACrossOver(data, MA_Low, MA_High):
     # print(items)
     # print(items[2295:2298])
     pos = 0
-    period  = 100
+    period = 100
     start = 0
     end = 0
     skip = 0
     antall = 0
     sum_invested = 0
-    value_today = 0
     amount = 2000
     skip_period = 50
     cost = 65
     nr_of_trades = 0
     buy_after_days = 1
-    print(data)
     try:
         for item in items:
             if pos > period and pos < len(items) - 1 - buy_after_days:
@@ -41,7 +41,8 @@ def computeMACrossOver(data, MA_Low, MA_High):
                     dateList = datoFull.split("T")
                     dato = dateList[0]
                     dateCompressed = int(dateList[0].replace("-", ""))
-                    resultList.append([dato, dateCompressed, items[pos + buy_after_days], int(amount/items[pos+buy_after_days]),antall ])
+                    resultList.append([dato, dateCompressed, items[pos + buy_after_days],
+                                       int(amount/items[pos+buy_after_days]), sum_invested, antall])
                     skip = skip_period
             skip = skip - 1
             pos = pos + 1
