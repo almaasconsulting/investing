@@ -36,7 +36,7 @@ end_MA = 200
 gridSize = 30
 debug = False
 
-stock = "T"
+stock = "STL.OL"
 start = datetime.datetime(2006, 1, 1)
 end = datetime.datetime(2022, 1, 27)
 print('****** Create Workbook ******')
@@ -76,7 +76,7 @@ try:
     closeList = pd.Series(f['Adj Close'])
     emaList = []
     for i in range(1, gridSize+1):
-        ema = pd.ewma(f['Adj Close'], span=(i*5 +45))
+        ema = closeList.ewm(span=(i*5 + 45), min_periods=0, ignore_na=False, adjust=True).mean()
         ema.columns = "%i" % (i*5+45)
         emaList.append(ema)
     print("****** Done creating Moving Average Data ******")
@@ -124,7 +124,7 @@ try:
 
                         for item in dividendData:
                             divDate = int(item[0].replace("-", ""))
-                            if divDate-14 > fromDate and divDate-14 < toDate:
+                            if divDate-20 > fromDate and divDate-20 < toDate:
                                 # Do have a dividend for the amount in fromElement
                                 divAmount = float(fromElement[5]) * float(item[1])
                                 totDividends = totDividends + divAmount
