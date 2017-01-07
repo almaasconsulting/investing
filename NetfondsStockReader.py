@@ -14,7 +14,7 @@ def readStockListData(url):
             isFirst = False
         else:
             itemList = row[0].split('\t')
-            print(itemList[1])
+            # print(itemList[1])
             stockList.append(itemList[1] + '.OL')
     # print(stockList)
     return stockList

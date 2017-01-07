@@ -25,7 +25,7 @@ def computeMACrossOver(data, MA_Low, MA_High):
     sum_invested = 0
     amount = 2000
     skip_period = 50
-    cost = 65
+    cost = 45
     nr_of_trades = 0
     buy_after_days = 1
     try:

@@ -21,7 +21,7 @@ import YahooDataReader as ydr
 """
 
 
-stock = "ASC.OL"
+stock = "ABT.OL"
 
 start = datetime.datetime(2006, 1, 1)
 end = datetime.datetime(2022, 1, 27)
@@ -58,12 +58,13 @@ try:
     print(list(f.columns.values))
     print('****** Create Moving Average Data ******')
     closeList = pd.Series(f['Adj Close'])
-    ema65 = pd.ewma(f['Adj Close'], span=65)
-    ema70 = pd.ewma(f['Adj Close'], span=70)
-    ema75 = pd.ewma(f['Adj Close'], span=75)
-    ema145 = pd.ewma(f['Adj Close'], span=145)
-    ema155 = pd.ewma(f['Adj Close'], span=155)
-    ema165 = pd.ewma(f['Adj Close'], span=165)
+    ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema70 = closeList.ewm(span=70, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema75 = closeList.ewm(span=75, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema145 = closeList.ewm(span=145, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema155 = closeList.ewm(span=155, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False, adjust=True).mean()
+
     # Call function for computing 52 low
     sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema155,
                           ema165], axis=1)
@@ -93,34 +94,36 @@ try:
                                               [1, 1, 2000, 31, 12, 2020], [],
                                               "dividend")
     # Sort the data such that the dividends are from start to end
-    dividendData.sort(key=lambda x: x[0])
-    # Now start to iterate through the items in the list
-    row = 1
+    if dividendData:
+        dividendData.sort(key=lambda x: x[0])
+        # Now start to iterate through the items in the list
+        row = 1
 
-    pos = 0
-    totDividends = 0
-    for i in range(0, len(trades52WL)):
-        fromElement = trades52WL[i]
-        fromDate = int(fromElement[1])
-        if i < len(trades52WL) - 1:
-            toElement = trades52WL[i+1]
-            toDate = int(toElement[1])
-        else:
-            toDate = 22001231
+        pos = 0
+        totDividends = 0
+        for i in range(0, len(trades52WL)):
+            fromElement = trades52WL[i]
+            fromDate = int(fromElement[1])
+            if i < len(trades52WL) - 1:
+                toElement = trades52WL[i+1]
+                toDate = int(toElement[1])
+            else:
+                toDate = 22001231
 
-        for item in dividendData:
-            divDate = int(item[0].replace("-", ""))
-            if divDate-14 > fromDate and divDate-14 < toDate:
-                # Do have a dividend for the amount in fromElement
-                divAmount = float(fromElement[4]) * float(item[1])
-                totDividends = totDividends + divAmount
-                # Write the result in workbook
-                worksheetDividends.write(row, col, stock)
-                worksheetDividends.write(row, col + 1, item[0])
-                worksheetDividends.write(row, col + 2, divDate)
-                worksheetDividends.write(row, col + 3, divAmount)
-                worksheetDividends.write(row, col + 4, totDividends)
-                row = row + 1
+            for item in dividendData:
+                divDate = int(item[0].replace("-", ""))
+                if divDate-14 > fromDate and divDate-14 < toDate:
+                    # Do have a dividend for the amount in fromElement
+                    divAmount = float(fromElement[4]) * float(item[1])
+                    totDividends = totDividends + divAmount
+                    # Write the result in workbook
+                    worksheetDividends.write(row, col, stock)
+                    worksheetDividends.write(row, col + 1, item[0])
+                    worksheetDividends.write(row, col + 2, divDate)
+                    worksheetDividends.write(row, col + 3, divAmount)
+                    worksheetDividends.write(row, col + 4, totDividends)
+                    row = row + 1
+
 
 except Exception as e:
     exc_type, exc_obj, exc_tb = sys.exc_info()
