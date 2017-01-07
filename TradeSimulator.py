@@ -1,9 +1,10 @@
+"""Script for generating AnnualDividend for a given stock or list of stocks."""
 import pandas_datareader.data as web
 import pandas as pd
 import datetime
 import matplotlib.pyplot as plt
 import xlsxwriter
-import time
+# import time
 import os
 import sys
 # User created modules
@@ -58,12 +59,18 @@ try:
     print(list(f.columns.values))
     print('****** Create Moving Average Data ******')
     closeList = pd.Series(f['Adj Close'])
-    ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False, adjust=True).mean()
-    ema70 = closeList.ewm(span=70, min_periods=0, ignore_na=False, adjust=True).mean()
-    ema75 = closeList.ewm(span=75, min_periods=0, ignore_na=False, adjust=True).mean()
-    ema145 = closeList.ewm(span=145, min_periods=0, ignore_na=False, adjust=True).mean()
-    ema155 = closeList.ewm(span=155, min_periods=0, ignore_na=False, adjust=True).mean()
-    ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False, adjust=True).mean()
+    ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False,
+                          adjust=True).mean()
+    ema70 = closeList.ewm(span=70, min_periods=0, ignore_na=False,
+                          adjust=True).mean()
+    ema75 = closeList.ewm(span=75, min_periods=0, ignore_na=False,
+                          adjust=True).mean()
+    ema145 = closeList.ewm(span=145, min_periods=0, ignore_na=False,
+                           adjust=True).mean()
+    ema155 = closeList.ewm(span=155, min_periods=0, ignore_na=False,
+                           adjust=True).mean()
+    ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False,
+                           adjust=True).mean()
 
     # Call function for computing 52 low
     sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema155,

@@ -1,8 +1,8 @@
-"""InvestmentScreener.py - Find investments based on 52WL strategy"""
+"""InvestmentScreener.py - Find investments based on 52WL strategy."""
 import pandas_datareader.data as web
 import pandas as pd
 import datetime
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import xlsxwriter
 import time
 import os
@@ -10,6 +10,7 @@ import sys
 import sqlite3
 from datetime import date
 import InvestmentScreenerFunctions as isf
+import TradeSimulatorFunctions as tsf
 
 
 debug = False
@@ -54,10 +55,7 @@ else:
     stockList = cur.fetchall()
     # print(len(items))
     print(len(stockList))
-    # for item in items:
-        # print(item[0])
-        # stockList.extend(item[0])
-    print(len(stockList))
+
 # Create connection to db
 # stockList = ['ASC.OL']
 print("Start processing the list of stocks")
@@ -71,8 +69,9 @@ for stock in stockList:
             print("Done with %i of %i" % (nr, len(stockList)))
             time.sleep(2)
     try:
-        query_string = "Select * from annual_dividends ad where ad.ticker = '%s'" % (stock[0])
-        cur.execute(query_string)
+        query_str = ("Select * from annual_dividends ad where ad.ticker = '%s'"
+                     % (stock[0]))
+        cur.execute(query_str)
         if cur.fetchone():
             # print("IS HERE")
             f = web.DataReader(stock[0], 'yahoo', start, end)
@@ -81,18 +80,16 @@ for stock in stockList:
                 print('****** Create Moving Average Data ******')
             closeList = pd.Series(f['Adj Close'])
 
-            # ema60 = closeList.ewm(span=60, min_periods=0, ignore_na=False, adjust=True).mean()
-            ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False, adjust=True).mean()
-            # ema70 = closeList.ewm(span=70, min_periods=0, ignore_na=False, adjust=True).mean()
-            # ema160 = closeList.ewm(span=160, min_periods=0, ignore_na=False, adjust=True).mean()
-            ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False, adjust=True).mean()
-            # ema170 = closeList.ewm(span=170, min_periods=0, ignore_na=False, adjust=True).mean()
-            # Call function for computing 52 WL
+            # ema60 = closeList.ewm(span=60, min_periods=0, ignore_na=False,
+            #                       adjust=True).mean()
+            ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False,
+                                  adjust=True).mean()
+            ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False,
+                                   adjust=True).mean()
             sameList = pd.concat([closeList, ema65, ema165], axis=1)
 
-            # print(sameList[1])
-            # ema15List = list(ema15.columns.values)
-            # print(ema15List)
+            if debug:
+                print(sameList[1])
             sameList.columns = ['Close', 'ema 65', 'ema 165']
             if debug:
                 print('****** Done Creating Moving Average Data ******')
@@ -100,9 +97,13 @@ for stock in stockList:
             # print(sameList.iloc[[2]])
             # Create an array of MA's to Test
             maTestList = ['Close', 'ema 65', 'ema 165']
-            trades52WL = isf.compute52WL(sameList, 'Close', maTestList[1], maTestList[2])
-            # valueMACross = tsf.computeMACrossOver(sameList, 'Close', maTestList[2], maTestList[4])
-            # valueGuppy = tam.computeGuppyMACrossOver(sameList, 'Close', 'ema 15', 'ema 30', 'ema 40')
+            # Call function for computing 52 WL
+            trades52WL = isf.compute52WL(sameList, 'Close', maTestList[1],
+                                         maTestList[2])
+            valueMACross = tsf.computeMACrossOver(sameList, 'Close',
+                                                  maTestList[2], maTestList[4])
+            # valueGuppy = tam.computeGuppyMACrossOver(sameList, 'Close',
+            #              'ema 15', 'ema 30', 'ema 40')
             # Now write the data to excel
             # First ' 52 Week Low'
             if len(trades52WL) > 0:
@@ -138,13 +139,14 @@ for stock in stockList:
                         is_ok = True
 
                 if is_ok:
-                    print("52 WeekLow - strategy added %s to screenlist" % (stock[0]))
+                    print("52 WeekLow - strategy added %s to screenlist"
+                          % (stock[0]))
                     row = row + 1
                     worksheet.write(row, col, stock[0])
                     worksheet.write(row, col + 1, item[0])
                     worksheet.write(row, col + 2, item[2])
                     worksheet.write(row, col + 3, "52 Week Low")
-            """
+
             if len(valueMACross) > 1:
                 item = valueMACross[len(valueMACross)-1]
                 today = date.today()
@@ -156,13 +158,13 @@ for stock in stockList:
                     print(type(item[1]))
 
                 if int(item[1]) > dato - 5:
-                    print("MACrossover - strategy added %s to screenlist - " % (stock))
+                    print("MACrossover - strategy added %s to screenlist - "
+                          % (stock))
                     row = row + 1
                     worksheet.write(row, col, stock)
                     worksheet.write(row, col + 1, item[0])
                     worksheet.write(row, col + 2, item[2])
                     worksheet.write(row, col + 3, "MACrossover")
-             """
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]

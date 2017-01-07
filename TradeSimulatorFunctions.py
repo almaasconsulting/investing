@@ -1,6 +1,10 @@
-"""TradeSimulatorFunctions.py"""
+"""TradeSimulatorFunctions.py."""
+
 debug = False
+
+
 def compute52WLTrades(data, colname, colnameComp, colnameComp2):
+    """Compute 52 WL trades for the input data"""
     items = data[colname].values.tolist()
     itemsComp = data[colnameComp].values.tolist()
     itemsComp2 = data[colnameComp2].values.tolist()
@@ -12,13 +16,12 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
     # print(items)
     # print(items[2295:2298])
     pos = 0
-    period  = 100
+    period = 100
     start = 0
     end = 0
     skip = 0
     antall = 0
     sum_invested = 0
-    value_today = 0
     amount = 2000
     skip_period = 50
     cost = 65
@@ -29,9 +32,12 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
             if pos > period and pos < len(data.index) - 1 - buy_after_days:
                 end = pos
                 start = pos - period
-                if items[pos] < min(items[start:end]) and skip < 1 and itemsComp2[pos] > itemsComp[pos]:
+                if (items[pos] < min(items[start:end]) and skip < 1 and
+                   itemsComp2[pos] > itemsComp[pos]):
                     antall = antall + int(amount/items[pos+buy_after_days])
-                    sum_invested = sum_invested + cost + float(int(amount/items[pos + buy_after_days]))*items[pos+buy_after_days]
+                    sum_invested = sum_invested + cost +
+                    float(int(amount/items[pos + buy_after_days]))*
+                    items[pos+buy_after_days]
                     nr_of_trades = nr_of_trades + 1
                     datoFull = str(data.index.values[pos+buy_after_days])
                     dateList = datoFull.split("T")
@@ -44,7 +50,10 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
                         print(data.index.values[pos+buy_after_days])
                         print("Dato is: %s" % (dato))
                         print("DateCompressed is: %i" % (dateCompressed))
-                    resultList.append([dato, dateCompressed, items[pos + buy_after_days], int(amount/items[pos+buy_after_days]),antall ])
+                    resultList.append([dato, dateCompressed, items[pos +
+                                      buy_after_days],
+                                      int(amount/items[pos+buy_after_days]),
+                                      antall])
 
                     skip = skip_period
             skip = skip - 1
@@ -69,7 +78,7 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
         print(len(data.index))
         print(data)
     pos = 0
-    period  = 100
+    period = 100
     start = 0
     end = 0
     skip = 0
@@ -86,9 +95,14 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
             if pos > period:
                 end = pos
                 start = pos - period
-                if itemsMALow[pos] > itemsMAHigh[pos] and min(itemsMALow[start:end]) < min(itemsMAHigh[start:end]) and skip < 1:
+                if (itemsMALow[pos] > itemsMAHigh[pos] and
+                    min(itemsMALow[start: end]) <
+                        min(itemsMAHigh[start:end]) and skip < 1):
                     antall = antall + int(amount/items[pos+buy_after_days])
-                    sum_invested = sum_invested + cost + float(int(amount/items[pos + buy_after_days]))*items[pos+buy_after_days]
+                    sum_invested = (sum_invested + cost +
+                                    float(int(amount/items[pos +
+                                          buy_after_days])) *
+                                    items[pos + buy_after_days])
                     nr_of_trades = nr_of_trades + 1
                     datoFull = str(data.index.values[pos+buy_after_days])
                     dateList = datoFull.split("T")
@@ -101,7 +115,10 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
                         print(data.index.values[pos+buy_after_days])
                         print("Dato is: %s" % (dato))
                         print("DateCompressed is: %i" % (dateCompressed))
-                    resultList.append([dato, dateCompressed, items[pos + buy_after_days], int(amount/items[pos+buy_after_days]),antall])
+                    resultList.append([dato, dateCompressed, items[pos +
+                                       buy_after_days],
+                                       int(amount / items[pos+buy_after_days]),
+                                       antall])
                     skip = skip_period
             skip = skip - 1
             pos = pos + 1
