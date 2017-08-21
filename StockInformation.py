@@ -40,6 +40,7 @@ def insertStockInformation(db, inDir, stockfile):
     else:
         print("Error..")
 
+
 def insertStockInformationFromURL(db, country, exchange):
     """Method for performing the insertion from reading urls."""
     if country == "USA":
@@ -67,6 +68,7 @@ def insertStockInformationFromURL(db, country, exchange):
             db.commit()
     else:
         print("Error..")
+
 
 # Creat test method for testing the yahooFinanceDataReader.
 def main():

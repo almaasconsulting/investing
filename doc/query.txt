@@ -1,0 +1,17 @@
+select ad_new.ticker, fi.paramValue,ad_new.year,ad_new.dividends,
+    ad_old.year,ad_old.dividends, (ad_new.dividends/ad_old.dividends)
+    as 'growth period year' ,(select count(dividends) from annual_dividends
+    where ticker = ad_new.ticker group by ticker having count(dividends) > 5) as antall,
+    round(ad_new.dividends/fi.paramValue*100,2) as 'Curr_yield'
+    from annual_dividends ad_new
+    inner join annual_dividends ad_old on ad_old.ticker = ad_new.ticker
+    inner join fainfo fi on fi.ticker = ad_new.ticker
+    where
+    ad_old.year = 2011
+    and ad_new.year = 2016
+    and ad_new.dividends > ad_old.dividends
+    and (ad_new.dividends/ad_old.dividends) > 1.3
+    and fi.name = 'p'
+	and  round(ad_new.dividends/fi.paramValue*100,2)  > 3.0
+	and ad_new.ticker like "%.OL"
+    order by antall desc,  (ad_new.dividends/ad_old.dividends)  desc

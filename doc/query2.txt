@@ -1,0 +1,11 @@
+SELECT sr.ticker, sr.paramType, sr.paramValue, sr2.paramType, sr2.paramValue, sr3.paramType, sr3.paramValue FROM `screener_results` sr
+inner join screener_results sr2 on sr2.ticker = sr.ticker
+inner join screener_results sr3 on sr3.ticker = sr.ticker
+where 
+sr.screener like "ChowderScore 5%"
+and sr.paramType like "%Value%"
+and sr2.screener like "ChowderScore 5%"
+and sr2.paramType like "%Current div%"
+and sr3.screener like "ChowderScore 5%"
+and sr3.paramType like "%Part%"
+and sr.ticker like "%.OL"

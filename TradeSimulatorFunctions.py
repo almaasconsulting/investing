@@ -24,7 +24,7 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
     sum_invested = 0
     amount = 2000
     skip_period = 50
-    cost = 65
+    cost = 29
     nr_of_trades = 0
     buy_after_days = 1
     try:
@@ -35,9 +35,10 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
                 if (items[pos] < min(items[start:end]) and skip < 1 and
                    itemsComp2[pos] > itemsComp[pos]):
                     antall = antall + int(amount/items[pos+buy_after_days])
-                    sum_invested = sum_invested + cost +
-                    float(int(amount/items[pos + buy_after_days]))*
-                    items[pos+buy_after_days]
+                    sum_invested = (sum_invested + cost +
+                                    float(int(amount/items[pos
+                                    + buy_after_days]))
+                                    * items[pos+buy_after_days])
                     nr_of_trades = nr_of_trades + 1
                     datoFull = str(data.index.values[pos+buy_after_days])
                     dateList = datoFull.split("T")
@@ -50,6 +51,7 @@ def compute52WLTrades(data, colname, colnameComp, colnameComp2):
                         print(data.index.values[pos+buy_after_days])
                         print("Dato is: %s" % (dato))
                         print("DateCompressed is: %i" % (dateCompressed))
+
                     resultList.append([dato, dateCompressed, items[pos +
                                       buy_after_days],
                                       int(amount/items[pos+buy_after_days]),
@@ -74,6 +76,7 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
     itemsMAHigh = data[MA_High].values.tolist()
     resultList = []
     # GET SIZE OF data
+    debug = False
     if debug:
         print(len(data.index))
         print(data)
@@ -85,9 +88,9 @@ def computeMACrossOver(data, colname, MA_Low, MA_High):
     antall = 0
     sum_invested = 0
     value_today = 0
-    amount = 2000
+    amount = 5000
     skip_period = 50
-    cost = 65
+    cost = 29
     nr_of_trades = 0
     buy_after_days = 1
     try:

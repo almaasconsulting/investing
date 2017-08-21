@@ -10,6 +10,7 @@ import sys
 # User created modules
 import TradeSimulatorFunctions as tsf
 import YahooDataReader as ydr
+import MACDStrategy as macdStr
 """Simulating trading strategies including Dividends ."""
 """It should do the following:
     1) Run the strategy and for each trade do a insert in an array
@@ -22,9 +23,9 @@ import YahooDataReader as ydr
 """
 
 
-stock = "ABT.OL"
+stock = "STL.OL"
 
-start = datetime.datetime(2006, 1, 1)
+start = datetime.datetime(2004, 1, 1)
 end = datetime.datetime(2022, 1, 27)
 print('****** Create Workbook ******')
 excelOutfile = 'TradingSimulationData.xlsx'
@@ -58,7 +59,7 @@ try:
     f = web.DataReader(stock, 'yahoo', start, end)
     print(list(f.columns.values))
     print('****** Create Moving Average Data ******')
-    closeList = pd.Series(f['Adj Close'])
+    closeList = pd.Series(f['Close'])
     ema65 = closeList.ewm(span=65, min_periods=0, ignore_na=False,
                           adjust=True).mean()
     ema70 = closeList.ewm(span=70, min_periods=0, ignore_na=False,
@@ -67,25 +68,28 @@ try:
                           adjust=True).mean()
     ema145 = closeList.ewm(span=145, min_periods=0, ignore_na=False,
                            adjust=True).mean()
-    ema155 = closeList.ewm(span=155, min_periods=0, ignore_na=False,
+    ema150 = closeList.ewm(span=150, min_periods=0, ignore_na=False,
                            adjust=True).mean()
-    ema165 = closeList.ewm(span=165, min_periods=0, ignore_na=False,
+    ema300 = closeList.ewm(span=300, min_periods=0, ignore_na=False,
                            adjust=True).mean()
 
     # Call function for computing 52 low
-    sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema155,
-                          ema165], axis=1)
+    sameList = pd.concat([closeList, ema65, ema70, ema75, ema145, ema150,
+                          ema300], axis=1)
 
     sameList.columns = ['Close', 'ema 65', 'ema 70', 'ema 75', 'ema 145',
-                        'ema 155', 'ema 165']
+                        'ema 150', 'ema 300']
     print('****** Done Creating Moving Average Data ******')
 
     # print(sameList.iloc[[2]])
     # Create an array of MA's to Test
-    maTestList = ['ema 65', 'ema 70', 'ema 75', 'ema 145', 'ema 155',
-                  'ema 165']
-    trades52WL = tsf.compute52WLTrades(sameList, 'Close', maTestList[1],
-                                       maTestList[4])
+    maTestList = ['ema 65', 'ema 70', 'ema 75', 'ema 145', 'ema 150',
+                  'ema 300']
+    trades52WL = tsf.compute52WLTrades(sameList, 'Close', maTestList[4],
+                                       maTestList[5])
+    tradesMACross = tsf.computeMACrossOver(sameList, 'Close', maTestList[4],
+                                       maTestList[5])
+    tradesMACD = macdStr.computeMACDStrategy(f)
     # print(trades52WL)
     for item in trades52WL:
         # Now write the data to excel
@@ -97,7 +101,7 @@ try:
         worksheetTrades.write(row, col + 4, item[3])
         worksheetTrades.write(row, col + 5, item[4])
     # Now fetch all dividend data for the given stock
-    dividendData = ydr.yahooFinanceDataReader([stock],
+    dividendData = ydr.yahooFinanceDataReader(stock,
                                               [1, 1, 2000, 31, 12, 2020], [],
                                               "dividend")
     # Sort the data such that the dividends are from start to end
@@ -148,8 +152,8 @@ plt.plot(sameList['ema 65'], label='ema65')
 plt.plot(sameList['ema 70'], label='ema70')
 plt.plot(sameList['ema 75'], label='ema75')
 plt.plot(sameList['ema 145'], label='ema145')
-plt.plot(sameList['ema 155'], label='ema155')
-plt.plot(sameList['ema 165'], label='ema165')
+plt.plot(sameList['ema 150'], label='ema150')
+plt.plot(sameList['ema 300'], label='ema300')
 legend = plt.legend(loc='upper center', shadow=True, fontsize='x-large')
 plt.show()
 

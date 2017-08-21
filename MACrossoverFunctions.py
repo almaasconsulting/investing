@@ -2,7 +2,7 @@
  This function computes profit for a strategy to trade at 52 Week Low
  It is not including dividends in the strategy
 """
-debug = False
+debug = True
 
 
 def computeMACrossOver(data, MA_Low, MA_High):

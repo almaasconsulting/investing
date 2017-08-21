@@ -25,7 +25,7 @@ def yahooFinanceDataReader(ticker, period, dataParameters, type):
         starturl = "http://real-chart.finance.yahoo.com/table.csv?s="
         midurl = "&c="
         endurl = "&g=v"
-        url = url.join((starturl, ticker[0], midurl, str(period[0]), endurl))
+        url = url.join((starturl, ticker, midurl, str(period[0]), endurl))
         if debug:
             print(url)
         # Now we have created the correct url, then fetch the file from
@@ -39,7 +39,7 @@ def yahooFinanceDataReader(ticker, period, dataParameters, type):
             tickers = "+"
             tickers = tickers.join(ticker)
         else:
-            tickers = ticker[0]
+            tickers = ticker
         # print("tickers er : %s" % (tickers))
         starturl = "http://finance.yahoo.com/d/quotes.csv?s="
         parameterurl = ''.join(dataParameters)
@@ -65,9 +65,10 @@ def yahooFinanceDataReader(ticker, period, dataParameters, type):
         csvfile = urllib.request.urlopen(url)
         datareader = csv.reader(io.TextIOWrapper(csvfile))
         dataAll = list(datareader)
+        # print(dataAll)
         if type != "fundamental":
             dataWithoutHeaders = dataAll[1:]
-            if len(dataWithoutHeaders) > 2:
+            if len(dataWithoutHeaders) > 0:
                 if debug:
                     for row in dataWithoutHeaders:
                         print(row)
