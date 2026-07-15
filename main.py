@@ -270,7 +270,13 @@ def main() -> None:
         print(f" Technical direction: {technical.get('direction', 'n/a')} | Signal: {technical.get('signal_summary', 'n/a')}")
         fundamentals = result.get("fundamentals", {})
         if fundamentals:
-            print(f" Fundamental P/E: {fundamentals.get('pe_ratio', 'n/a')} | EPS: {fundamentals.get('eps', 'n/a')} | Dividend yield: {fundamentals.get('dividend_yield', 'n/a')}")
+            print(
+                f" Fundamental P/E: {fundamentals.get('pe_ratio', 'n/a')} | "
+                f"EPS: {fundamentals.get('eps', 'n/a')} | "
+                f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')} | "
+                f"Altman Z: {fundamentals.get('altman_z_score', 'n/a')} "
+                f"({fundamentals.get('altman_z_zone', 'Unavailable')})"
+            )
 
         if args.save and not result.get("error"):
             save_stock_history(

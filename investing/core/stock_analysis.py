@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 from typing import Any
 
 import pandas as pd
@@ -82,6 +83,116 @@ def _lookup_fundamental(info: dict[str, Any], keys: list[str]) -> Any:
     return None
 
 
+def calculate_altman_z_score(
+    *,
+    total_assets: float,
+    current_assets: float,
+    current_liabilities: float,
+    retained_earnings: float,
+    ebit: float,
+    market_value_equity: float,
+    total_liabilities: float,
+    revenue: float,
+) -> float | None:
+    """Calculate the original Altman Z-score for a public company.
+
+    Returns ``None`` when a required input is missing/non-finite or when a
+    denominator is not positive. The original model is primarily intended for
+    publicly traded manufacturing companies.
+    """
+    values = (
+        total_assets,
+        current_assets,
+        current_liabilities,
+        retained_earnings,
+        ebit,
+        market_value_equity,
+        total_liabilities,
+        revenue,
+    )
+    try:
+        numbers = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in numbers):
+        return None
+    (
+        total_assets,
+        current_assets,
+        current_liabilities,
+        retained_earnings,
+        ebit,
+        market_value_equity,
+        total_liabilities,
+        revenue,
+    ) = numbers
+    if total_assets <= 0 or total_liabilities <= 0:
+        return None
+
+    working_capital = current_assets - current_liabilities
+    return (
+        1.2 * working_capital / total_assets
+        + 1.4 * retained_earnings / total_assets
+        + 3.3 * ebit / total_assets
+        + 0.6 * market_value_equity / total_liabilities
+        + revenue / total_assets
+    )
+
+
+def altman_z_zone(score: float | None) -> str:
+    """Classify an original Altman Z-score using its standard cutoffs."""
+    if score is None:
+        return "Unavailable"
+    if score < 1.81:
+        return "Distress"
+    if score <= 2.99:
+        return "Grey"
+    return "Safe"
+
+
+def _latest_statement_value(statement: pd.DataFrame, names: list[str]) -> float | None:
+    if not isinstance(statement, pd.DataFrame) or statement.empty:
+        return None
+    normalized = {str(index).replace(" ", "").lower(): index for index in statement.index}
+    for name in names:
+        index = normalized.get(name.replace(" ", "").lower())
+        if index is None:
+            continue
+        values = pd.to_numeric(statement.loc[index], errors="coerce").dropna()
+        if not values.empty:
+            return float(values.iloc[0])
+    return None
+
+
+def _get_altman_fundamentals(ticker: yf.Ticker, info: dict[str, Any]) -> dict[str, Any]:
+    try:
+        balance_sheet = ticker.balance_sheet
+        income_statement = ticker.income_stmt
+    except Exception:
+        return {"altman_z_score": None, "altman_z_zone": "Unavailable"}
+
+    inputs = {
+        "total_assets": _latest_statement_value(balance_sheet, ["TotalAssets"]),
+        "current_assets": _latest_statement_value(balance_sheet, ["CurrentAssets", "TotalCurrentAssets"]),
+        "current_liabilities": _latest_statement_value(
+            balance_sheet, ["CurrentLiabilities", "TotalCurrentLiabilities"]
+        ),
+        "retained_earnings": _latest_statement_value(balance_sheet, ["RetainedEarnings"]),
+        "ebit": _latest_statement_value(income_statement, ["EBIT", "OperatingIncome"]),
+        "market_value_equity": info.get("marketCap"),
+        "total_liabilities": _latest_statement_value(
+            balance_sheet,
+            ["TotalLiabilitiesNetMinorityInterest", "TotalLiabilities"],
+        ),
+        "revenue": _latest_statement_value(income_statement, ["TotalRevenue", "OperatingRevenue"]),
+    }
+    score = calculate_altman_z_score(**inputs)
+    return {
+        "altman_z_score": round(score, 3) if score is not None else None,
+        "altman_z_zone": altman_z_zone(score),
+    }
+
+
 def _load_investpy() -> Any:
     try:
         import investpy
@@ -152,6 +263,7 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         raise ValueError("Fundamental data source must be one of: auto, investing, yahoo.")
 
     info = {}
+    investing_fundamentals: dict[str, Any] = {}
     if source != "yahoo":
         try:
             investpy = _load_investpy()
@@ -159,7 +271,7 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         except Exception:
             pass
 
-        fundamentals = {
+        investing_fundamentals = {
             "market_cap": _lookup_fundamental(info, ["Market Cap", "Market Capitalization"]),
             "pe_ratio": _lookup_fundamental(info, ["P/E Ratio", "PE Ratio"]),
             "eps": _lookup_fundamental(info, ["EPS"]),
@@ -170,15 +282,18 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
             "revenue": _lookup_fundamental(info, ["Revenue"]),
             "prev_close": _lookup_fundamental(info, ["Prev. Close"]),
         }
-        if any(fundamentals.values()):
-            return fundamentals
         if source == "investing":
-            return fundamentals
+            return investing_fundamentals
 
     yahoo_symbol = _resolve_yahoo_symbol(symbol, country)
-    ticker = yf.Ticker(yahoo_symbol)
-    info = ticker.info or {}
-    return {
+    try:
+        ticker = yf.Ticker(yahoo_symbol)
+        info = ticker.info or {}
+    except Exception:
+        if any(investing_fundamentals.values()):
+            return investing_fundamentals
+        raise
+    yahoo_fundamentals = {
         "market_cap": info.get("marketCap"),
         "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
         "eps": info.get("trailingEps") or info.get("forwardEps"),
@@ -197,6 +312,11 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         "debt_to_equity": info.get("debtToEquity"),
         "current_ratio": info.get("currentRatio"),
         "free_cashflow": info.get("freeCashflow"),
+        **_get_altman_fundamentals(ticker, info),
+    }
+    return {
+        **yahoo_fundamentals,
+        **{key: value for key, value in investing_fundamentals.items() if value not in (None, "", "N/A")},
     }
 
 

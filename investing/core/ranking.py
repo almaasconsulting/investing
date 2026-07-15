@@ -134,6 +134,7 @@ def _result_row(result: dict) -> dict:
     return_on_equity = parse_number(fundamentals.get("return_on_equity"))
     debt_to_equity = parse_number(fundamentals.get("debt_to_equity"))
     profit_margins = parse_number(fundamentals.get("profit_margins"))
+    altman_z_score = parse_number(fundamentals.get("altman_z_score"))
 
     technical_score = (
         score_positive(score, good=-0.01, excellent=0.04) * 0.30
@@ -144,15 +145,16 @@ def _result_row(result: dict) -> dict:
     )
 
     fundamental_score = (
-        score_pe(pe) * 0.24
-        + score_positive(eps, good=0, excellent=20) * 0.12
-        + score_positive(dividend, good=0, excellent=0.06) * 0.12
-        + score_lower_better(beta, good=0.7, bad=1.8) * 0.10
+        score_pe(pe) * 0.20
+        + score_positive(eps, good=0, excellent=20) * 0.10
+        + score_positive(dividend, good=0, excellent=0.06) * 0.10
+        + score_lower_better(beta, good=0.7, bad=1.8) * 0.08
         + score_positive(revenue_growth, good=-0.05, excellent=0.25) * 0.10
         + score_positive(earnings_growth, good=-0.05, excellent=0.25) * 0.10
         + score_positive(return_on_equity, good=0, excellent=0.20) * 0.10
         + score_lower_better(debt_to_equity, good=40, bad=200) * 0.06
         + score_positive(profit_margins, good=0, excellent=0.20) * 0.06
+        + score_positive(altman_z_score, good=1.81, excellent=3.0) * 0.10
     )
 
     return {
@@ -181,6 +183,8 @@ def _result_row(result: dict) -> dict:
         "return_on_equity": return_on_equity,
         "debt_to_equity": debt_to_equity,
         "profit_margins": profit_margins,
+        "altman_z_score": altman_z_score,
+        "altman_z_zone": fundamentals.get("altman_z_zone") or "Unavailable",
         "valuation_bucket": valuation_bucket(pe),
         "dividend_bucket": dividend_bucket(dividend),
     }
@@ -214,6 +218,7 @@ def build_rankings(
         "recommendation": "recommended",
         "valuation": "valuation_bucket",
         "dividend": "dividend_bucket",
+        "altman_z_zone": "altman_z_zone",
         "none": "group",
     }.get(group_by, "correlation_cluster")
 

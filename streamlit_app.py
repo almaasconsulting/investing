@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 from investing.core.clustering import (
     build_close_price_matrix,
@@ -142,9 +143,13 @@ def detail_frame(values: dict) -> pd.DataFrame:
     rows = []
     for key, value in values.items():
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            value = round(float(value), 3)
-        rows.append({"field": key, "value": value})
-    return pd.DataFrame(rows)
+            display_value = f"{float(value):.3f}"
+        elif value is None:
+            display_value = ""
+        else:
+            display_value = str(value)
+        rows.append({"field": str(key), "value": display_value})
+    return pd.DataFrame(rows, dtype="string")
 
 
 def numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -254,6 +259,26 @@ def analysis_filter_controls(frame: pd.DataFrame) -> pd.DataFrame:
         threshold = st.number_input("Maximum debt/equity", value=200.0, step=10.0, format="%.3f", key="analysis_filter_debt")
         filtered = apply_max_filter(filtered, "debt_to_equity", threshold)
 
+    altman_z_zones = text_options(frame, "altman_z_zone")
+    selected_altman_z_zones = st.multiselect(
+        "Altman Z-score zone",
+        altman_z_zones,
+        default=altman_z_zones,
+        key="analysis_filter_altman_z_zone",
+    )
+    if altman_z_zones and set(selected_altman_z_zones) != set(altman_z_zones):
+        filtered = filtered[filtered["altman_z_zone"].astype(str).isin(selected_altman_z_zones)]
+
+    if st.checkbox("Altman Z-score >=", value=False, key="analysis_filter_use_altman_z"):
+        threshold = st.number_input(
+            "Minimum Altman Z-score",
+            value=1.81,
+            step=0.1,
+            format="%.3f",
+            key="analysis_filter_altman_z",
+        )
+        filtered = apply_min_filter(filtered, "altman_z_score", threshold)
+
     st.caption(f"{len(filtered)} of {len(frame)} analyzed stocks match")
     return filtered
 
@@ -318,7 +343,10 @@ def spider_scores(result: dict) -> dict[str, float]:
             score_positive(return_on_equity, good=0, excellent=0.20),
             score_positive(profit_margins, good=0, excellent=0.20),
         ),
-        "Balance Sheet": score_lower_better(debt_to_equity, good=40, bad=200),
+        "Balance Sheet": average_score(
+            score_lower_better(debt_to_equity, good=40, bad=200),
+            score_positive(parse_number(fundamentals.get("altman_z_score")), good=1.81, excellent=3.0),
+        ),
     }
 
 
@@ -424,6 +452,8 @@ def scorecard_frame(results: list[dict]) -> pd.DataFrame:
                 "debt_to_equity": parse_number(fundamentals.get("debt_to_equity")),
                 "current_ratio": parse_number(fundamentals.get("current_ratio")),
                 "free_cashflow": parse_number(fundamentals.get("free_cashflow")),
+                "altman_z_score": parse_number(fundamentals.get("altman_z_score")),
+                "altman_z_zone": fundamentals.get("altman_z_zone") or "Unavailable",
                 "error": "",
             }
         )
@@ -581,7 +611,9 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
             lines.append(
                 " Fundamental P/E: "
                 f"{fundamentals.get('pe_ratio', 'n/a')} | EPS: {fundamentals.get('eps', 'n/a')} | "
-                f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')}"
+                f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')} | "
+                f"Altman Z: {fundamentals.get('altman_z_score', 'n/a')} "
+                f"({fundamentals.get('altman_z_zone', 'Unavailable')})"
             )
         lines.append("")
     return "\n".join(lines).strip()
@@ -626,7 +658,7 @@ with st.sidebar:
     max_volatility = st.number_input("Max volatility", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.2f")
     min_correlation = st.slider("Cluster correlation", min_value=-1.0, max_value=1.0, value=0.65, step=0.05)
 
-    if st.button("Refresh Universe", use_container_width=True):
+    if st.button("Refresh Universe", width="stretch"):
         with st.spinner("Refreshing stock universe"):
             universe = fetch_stock_universe(countries=countries, source=universe_source)
             saved = save_stock_universe(universe, replace_countries=countries)
@@ -673,7 +705,7 @@ if selection_mode == "Sectors" and not analyze_all:
         if not sector_counts.empty:
             sector_counts["last_run_at"] = sector_counts["last_run_at"].map(format_timestamp)
         if selected_sectors:
-            st.dataframe(round_numeric_frame(sector_counts), use_container_width=True, hide_index=True)
+            st.dataframe(round_numeric_frame(sector_counts), width="stretch", hide_index=True)
     else:
         st.info("Sector selection uses saved analysis data. Run analysis once, then reload the app or click Load Saved Analysis.")
 else:
@@ -713,7 +745,7 @@ tab_universe, tab_watchlist, tab_stock_view, tab_analysis, tab_spider, tab_ranki
 
 with tab_universe:
     columns = ["symbol", "yahoo_symbol", "name", "country", "market", "exchange_mic", "isin", "currency", "source"]
-    st.dataframe(round_numeric_frame(universe[columns]), use_container_width=True, hide_index=True)
+    st.dataframe(round_numeric_frame(universe[columns]), width="stretch", hide_index=True)
 
 with tab_watchlist:
     watchlist_rows = read_watchlist()
@@ -722,7 +754,7 @@ with tab_watchlist:
         if field not in watchlist_frame.columns:
             watchlist_frame[field] = ""
     watchlist_frame = watchlist_frame[WATCHLIST_FIELDS]
-    st.dataframe(round_numeric_frame(watchlist_frame), use_container_width=True, hide_index=True)
+    st.dataframe(round_numeric_frame(watchlist_frame), width="stretch", hide_index=True)
 
     note = st.text_input("Note for selected stocks", value="")
     if st.button("Add Selected Stocks To Watchlist", disabled=active_rows.empty):
@@ -753,7 +785,7 @@ with tab_watchlist:
                 )
                 st.success(f"Added {added} stock to {path}")
 
-    edited = st.data_editor(watchlist_frame, num_rows="dynamic", use_container_width=True, hide_index=True)
+    edited = st.data_editor(watchlist_frame, num_rows="dynamic", width="stretch", hide_index=True)
     if st.button("Save Edited Watchlist"):
         path = write_watchlist(edited.to_dict("records"))
         st.success(f"Saved watchlist to {path}")
@@ -801,17 +833,17 @@ with tab_stock_view:
             data = result.get("data")
             if isinstance(data, pd.DataFrame) and not data.empty:
                 chart_data = data.sort_values("date")[["date", "close", "ma20", "ma50", "ma200"]]
-                st.line_chart(chart_data.set_index("date"), use_container_width=True)
+                st.line_chart(chart_data.set_index("date"), width="stretch")
 
             detail_left, detail_right = st.columns(2)
             detail_left.dataframe(
                 detail_frame(technical),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             detail_right.dataframe(
                 detail_frame(fundamentals),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -859,7 +891,7 @@ with tab_analysis:
         filtered_results = filter_results_by_frame(results, filtered_frame)
         st.session_state["filtered_analysis_results"] = filtered_results
 
-        st.dataframe(round_numeric_frame(filtered_frame), use_container_width=True, hide_index=True)
+        st.dataframe(round_numeric_frame(filtered_frame), width="stretch", hide_index=True)
 
         if filtered_frame.empty or not filtered_results:
             st.warning("No analyzed stocks match the selected filters.")
@@ -871,7 +903,12 @@ with tab_analysis:
             report_path = generate_watchlist_report(filtered_results, "reports/ui_watchlist_report.html")
             html_report = report_path.read_text(encoding="utf-8")
             st.subheader("HTML Report")
-            components.html(html_report, height=720, scrolling=True)
+            encoded_report = base64.b64encode(html_report.encode("utf-8")).decode("ascii")
+            st.iframe(
+                f"data:text/html;base64,{encoded_report}",
+                height=720,
+                width="stretch",
+            )
 
             if st.button("Save Analysis To DuckDB"):
                 saved_history, saved_snapshots = store_analysis_results(
@@ -904,10 +941,10 @@ with tab_spider:
 
             if selected_symbols:
                 fig = build_spider_chart(radar_frame, selected_symbols)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 st.dataframe(
                     round_numeric_frame(radar_frame[radar_frame["symbol"].isin(selected_symbols)]),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -929,6 +966,7 @@ with tab_rankings:
             "Recommendation": "recommendation",
             "Valuation bucket": "valuation",
             "Dividend bucket": "dividend",
+            "Altman Z-score zone": "altman_z_zone",
             "No grouping": "none",
         }
         rank_left, rank_right = st.columns([1, 1])
@@ -970,13 +1008,15 @@ with tab_rankings:
                 "direction",
                 "pe_ratio",
                 "dividend_yield",
+                "altman_z_score",
+                "altman_z_zone",
                 "volatility",
                 "price_change",
                 "sector",
                 "industry",
             ]
             available_columns = [column for column in ranking_columns if column in rankings.columns]
-            st.dataframe(round_numeric_frame(rankings[available_columns]), use_container_width=True, hide_index=True)
+            st.dataframe(round_numeric_frame(rankings[available_columns]), width="stretch", hide_index=True)
 
             chart = px.bar(
                 rankings.sort_values("ranking_score", ascending=False).head(40),
@@ -986,7 +1026,7 @@ with tab_rankings:
                 hover_data=["name", "technical_score", "fundamental_score"],
             )
             chart.update_layout(height=520, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(chart, use_container_width=True)
+            st.plotly_chart(chart, width="stretch")
 
             summary = (
                 rankings.groupby("group", as_index=False)
@@ -997,7 +1037,7 @@ with tab_rankings:
                 )
                 .sort_values("avg_score", ascending=False)
             )
-            st.dataframe(round_numeric_frame(summary), use_container_width=True, hide_index=True)
+            st.dataframe(round_numeric_frame(summary), width="stretch", hide_index=True)
 
 with tab_clusters:
     run_clusters = st.button("Run Clustering", type="primary", disabled=active_rows.empty)
@@ -1029,14 +1069,14 @@ with tab_clusters:
         pairs = cluster_result["pairs"]
         errors = cluster_result["errors"]
 
-        st.dataframe(round_numeric_frame(clusters), use_container_width=True, hide_index=True)
+        st.dataframe(round_numeric_frame(clusters), width="stretch", hide_index=True)
         if not correlation.empty:
             fig = px.imshow(correlation, color_continuous_scale="RdBu", zmin=-1, zmax=1, aspect="auto")
             fig.update_layout(height=620, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         if not pairs.empty:
             left, right = st.columns(2)
-            left.dataframe(round_numeric_frame(pairs.head(20)), use_container_width=True, hide_index=True)
-            right.dataframe(round_numeric_frame(pairs.sort_values("correlation").head(20)), use_container_width=True, hide_index=True)
+            left.dataframe(round_numeric_frame(pairs.head(20)), width="stretch", hide_index=True)
+            right.dataframe(round_numeric_frame(pairs.sort_values("correlation").head(20)), width="stretch", hide_index=True)
         if errors:
-            st.dataframe(round_numeric_frame(pd.DataFrame(errors)), use_container_width=True, hide_index=True)
+            st.dataframe(round_numeric_frame(pd.DataFrame(errors)), width="stretch", hide_index=True)
