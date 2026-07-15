@@ -1,0 +1,7 @@
+duckdb
+pandas
+investpy
+yfinance
+streamlit
+plotly
+setuptools
