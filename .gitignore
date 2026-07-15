@@ -1,4 +1,5 @@
 .venv/
+**/.venv-old*/
 **/.venv.broken*/
 __pycache__/
 *.pyc
