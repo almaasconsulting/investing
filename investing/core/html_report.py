@@ -105,6 +105,8 @@ def generate_watchlist_report(items: list[dict], output_path: str | Path | None 
                 ('Debt to equity', fundamentals.get('debt_to_equity')),
                 ('Current ratio', fundamentals.get('current_ratio')),
                 ('Free cashflow', fundamentals.get('free_cashflow')),
+                ('Altman Z-score', fundamentals.get('altman_z_score')),
+                ('Altman Z-score zone', fundamentals.get('altman_z_zone')),
             ])}"
             f"</section>"
         )

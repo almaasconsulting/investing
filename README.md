@@ -52,10 +52,10 @@ From the UI you can also:
 - inspect a selected analyzed stock with price, moving averages, technical fields, and fundamentals
 - search the selectable universe by ticker, Yahoo ticker, company name, or ISIN
 - select stocks directly or select saved sectors to analyze whole sector groups
-- filter analyzed stocks by technical and fundamental criteria such as direction, score, volatility, RSI, P/E, dividend yield, growth, ROE, and debt/equity
+- filter analyzed stocks by technical and fundamental criteria such as direction, score, volatility, RSI, P/E, dividend yield, growth, ROE, debt/equity, and Altman Z-score
 - compare filtered stocks in a spider chart across normalized technical and fundamental dimensions
 - rank analyzed stocks by a blended technical/fundamental score
-- group rankings by correlation cluster, market, country, sector, industry, trend, recommendation, valuation, or dividend bucket
+- group rankings by correlation cluster, market, country, sector, industry, trend, recommendation, valuation, dividend bucket, or Altman Z-score zone
 - view the CLI-style printed output in the Analysis tab
 - view the generated HTML report inside the Analysis tab
 - view numeric UI tables rounded to 3 decimals
@@ -69,9 +69,10 @@ From the UI you can also:
   - 5-year share price history
   - daily technical indicator values such as MA20, MA50, MA200, RSI14, direction, and signal summary
   - data source provenance for saved history and fundamentals
-  - fundamental snapshots including market cap, P/E ratio, EPS, dividend yield, beta, revenue, and more
+  - fundamental snapshots including market cap, P/E ratio, EPS, dividend yield, beta, revenue, Altman Z-score, and more
   - analysis snapshots with last run timestamp, scorecard, technical overview, fundamentals, and metrics
 - The watchlist is configured in `watchlist.csv` at the repository root.
+- Altman Z-score uses the original public-company model and Yahoo's latest annual statements. It is primarily intended for publicly traded manufacturers; missing inputs are shown as unavailable rather than estimated.
 - A country-aware `stock_universe` table stores selectable stock metadata for clustering and portfolio construction, including Yahoo Finance tickers.
 
 ## Watchlist and HTML report

@@ -81,7 +81,9 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
             profit_margins DOUBLE,
             debt_to_equity DOUBLE,
             current_ratio DOUBLE,
-            free_cashflow DOUBLE
+            free_cashflow DOUBLE,
+            altman_z_score DOUBLE,
+            altman_z_zone VARCHAR
         );
         CREATE TABLE IF NOT EXISTS stock_universe (
             symbol VARCHAR,
@@ -132,6 +134,8 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS debt_to_equity DOUBLE;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS current_ratio DOUBLE;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS free_cashflow DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS altman_z_score DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS altman_z_zone VARCHAR;")
     con.execute("ALTER TABLE stock_universe ADD COLUMN IF NOT EXISTS yahoo_symbol VARCHAR;")
     con.execute("ALTER TABLE analysis_snapshot ADD COLUMN IF NOT EXISTS run_timestamp TIMESTAMP;")
     con.execute("ALTER TABLE analysis_snapshot ADD COLUMN IF NOT EXISTS yahoo_symbol VARCHAR;")
@@ -244,6 +248,8 @@ def save_fundamental_snapshot(
         "debt_to_equity": fundamentals.get("debt_to_equity"),
         "current_ratio": fundamentals.get("current_ratio"),
         "free_cashflow": fundamentals.get("free_cashflow"),
+        "altman_z_score": fundamentals.get("altman_z_score"),
+        "altman_z_zone": fundamentals.get("altman_z_zone"),
     }
     df = pd.DataFrame([row])
     con.register("new_data", df)
@@ -253,13 +259,15 @@ def save_fundamental_snapshot(
             snapshot_date, ticker, name, country, exchange, data_source, market_cap,
             pe_ratio, eps, dividend_yield, beta, one_year_change, shares_outstanding,
             revenue, prev_close, sector, industry, revenue_growth, earnings_growth,
-            return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow
+            return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow,
+            altman_z_score, altman_z_zone
         )
         SELECT
             snapshot_date, ticker, name, country, exchange, data_source, market_cap,
             pe_ratio, eps, dividend_yield, beta, one_year_change, shares_outstanding,
             revenue, prev_close, sector, industry, revenue_growth, earnings_growth,
-            return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow
+            return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow,
+            altman_z_score, altman_z_zone
         FROM new_data
         """
     )

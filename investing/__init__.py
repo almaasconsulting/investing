@@ -25,6 +25,7 @@ from .core.ranking import build_rankings
 from .core.portfolio import analyze_stock, analyze_stocks
 from .core.watchlist import analyze_watchlist, append_watchlist_rows, read_watchlist, write_watchlist
 from .core.stock_analyzer import compute_stock_metrics, build_scorecard
+from .core.stock_analysis import altman_z_zone, calculate_altman_z_score
 
 __all__ = [
     "find_stock",
@@ -56,4 +57,6 @@ __all__ = [
     "build_rankings",
     "compute_stock_metrics",
     "build_scorecard",
+    "calculate_altman_z_score",
+    "altman_z_zone",
 ]
