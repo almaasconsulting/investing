@@ -40,7 +40,9 @@ Then open the local URL printed by Streamlit, usually:
 http://localhost:8501
 ```
 
-The UI defaults market data to Yahoo Finance. Use **Refresh Universe** once, then filter markets/stocks and run analysis or clustering.
+The UI defaults market data to merged **auto** mode. Use **Refresh Universe** once, then filter markets/stocks and run analysis or clustering.
+
+Choose **auto** to query Yahoo Finance and Investing.com together. Auto mode prefers Yahoo for every overlapping fundamental field and daily OHLCV value, uses Investing.com only to fill Yahoo gaps, and continues with either provider if the other fails. Provider provenance is retained in the analysis result and saved data-source fields.
 
 From the UI you can also:
 
@@ -54,7 +56,7 @@ From the UI you can also:
 - select stocks directly or select saved sectors to analyze whole sector groups
 - filter analyzed stocks by technical and fundamental criteria such as direction, score, volatility, RSI, P/E, dividend yield, growth, ROE, debt/equity, and Altman Z-score
 - compare filtered stocks in a spider chart across normalized technical and fundamental dimensions
-- rank analyzed stocks by a blended technical/fundamental score
+- rank analyzed stocks by a blended technical/sector-specific fundamental score
 - group rankings by correlation cluster, market, country, sector, industry, trend, recommendation, valuation, dividend bucket, or Altman Z-score zone
 - view the CLI-style printed output in the Analysis tab
 - view the generated HTML report inside the Analysis tab
@@ -74,6 +76,30 @@ From the UI you can also:
 - The watchlist is configured in `watchlist.csv` at the repository root.
 - Altman Z-score uses the original public-company model and Yahoo's latest annual statements. It is primarily intended for publicly traded manufacturers; missing inputs are shown as unavailable rather than estimated.
 - A country-aware `stock_universe` table stores selectable stock metadata for clustering and portfolio construction, including Yahoo Finance tickers.
+
+## Sector-specific fundamental rankings
+
+The ranking engine maps Yahoo sector names to the 11-sector GICS-style structure and changes the fundamental weights by sector. The default ranking view groups stocks by sector and uses 35% technical / 65% fundamental weighting. Missing indicators contribute a neutral score, while `fundamental_coverage` reports how much of the sector profile had usable data.
+
+| Sector | Highest-weight indicators |
+|---|---|
+| Basic Materials | EV/EBITDA, free-cash-flow yield, debt/equity |
+| Communication Services | EV/EBITDA, free-cash-flow yield, revenue growth, operating margin |
+| Consumer Cyclical | P/E, earnings growth, operating margin |
+| Consumer Defensive | P/E, free-cash-flow yield, dividend yield, operating margin |
+| Energy | EV/EBITDA, free-cash-flow yield, debt/equity, dividend yield |
+| Financial Services | ROE, ROA, price/book, P/E |
+| Healthcare | Revenue growth, earnings growth, free-cash-flow yield, operating margin |
+| Industrials | Free-cash-flow yield, debt/equity, ROE |
+| Real Estate | FFO yield, dividend yield, EV/EBITDA, debt/equity |
+| Technology | Revenue growth, earnings growth, free-cash-flow yield, operating margin |
+| Utilities | Dividend yield, EV/EBITDA, debt/equity |
+
+These profiles are transparent screening heuristics rather than investment advice or a fitted prediction model. The complete weights are visible in the Streamlit Rankings tab and in `SECTOR_FUNDAMENTAL_PROFILES` in `investing/core/ranking.py`. FFO data is not available for every Yahoo instrument; unavailable values remain neutral and reduce coverage.
+
+The profile design is informed by S&P's GICS sector framework, NYU Stern's industry datasets for valuation, margins, returns and leverage, FDIC bank performance ratios, and Nareit's FFO guidance for real estate companies.
+
+Dividend quality is included in every sector at a sector-dependent weight (5% for Technology and Healthcare up to 20% for Real Estate and Utilities). Its score combines sector-relative yield (35%), consecutive years paid (35%), five-year dividend CAGR (20%), and payout sustainability (10%). A yield above the normal band is penalized rather than automatically rewarded. Auto mode merges Yahoo and Investing.com dividend histories, with Yahoo preferred where both provide the same history metric.
 
 ## Watchlist and HTML report
 

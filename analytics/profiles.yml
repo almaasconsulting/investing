@@ -1,0 +1,8 @@
+investing_analytics:
+  target: prod
+  outputs:
+    prod:
+      type: duckdb
+      path: "{{ env_var('INVESTING_DB_PATH') }}"
+      schema: main
+      threads: 1

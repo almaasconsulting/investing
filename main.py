@@ -3,6 +3,7 @@ from typing import Sequence
 
 from investing.core.html_report import generate_watchlist_report
 from investing.core.portfolio import analyze_stocks
+from investing.core.ranking import build_sector_fundamental_score
 from investing.core.watchlist import analyze_watchlist, read_watchlist
 from investing.data_fetch.investing_com import search_stocks
 from investing.data_fetch.stock_universe import fetch_stock_universe
@@ -270,12 +271,23 @@ def main() -> None:
         print(f" Technical direction: {technical.get('direction', 'n/a')} | Signal: {technical.get('signal_summary', 'n/a')}")
         fundamentals = result.get("fundamentals", {})
         if fundamentals:
+            sector_scoring = build_sector_fundamental_score(fundamentals)
             print(
                 f" Fundamental P/E: {fundamentals.get('pe_ratio', 'n/a')} | "
                 f"EPS: {fundamentals.get('eps', 'n/a')} | "
                 f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')} | "
                 f"Altman Z: {fundamentals.get('altman_z_score', 'n/a')} "
                 f"({fundamentals.get('altman_z_zone', 'Unavailable')})"
+            )
+            print(
+                f" Sector fundamentals: {sector_scoring['fundamental_score']:.3f}/100 | "
+                f"Profile: {sector_scoring['sector_profile']} | "
+                f"Coverage: {sector_scoring['fundamental_coverage']:.1f}%"
+            )
+            print(
+                f" Dividend quality: {sector_scoring.get('dividend_score', 50.0):.3f}/100 | "
+                f"Years paid: {fundamentals.get('dividend_years_paid', 'n/a')} | "
+                f"Consecutive years: {fundamentals.get('consecutive_dividend_years', 'n/a')}"
             )
 
         if args.save and not result.get("error"):
@@ -293,7 +305,10 @@ def main() -> None:
                 name=result["name"],
                 country=result["country"],
                 exchange=result["exchange"],
-                data_source=result.get("data_source", args.data_source),
+                data_source=result.get(
+                    "fundamental_data_source",
+                    result.get("data_source", args.data_source),
+                ),
             )
             print(" Saved historical and fundamental data to DuckDB")
 

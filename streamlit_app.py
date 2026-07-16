@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import importlib
+from dataclasses import replace
 
 import pandas as pd
 import plotly.express as px
@@ -14,16 +16,22 @@ from investing.core.clustering import (
     correlation_pairs,
 )
 from investing.core.html_report import generate_watchlist_report
-from investing.core.portfolio import analyze_stocks
-from investing.core.ranking import (
-    build_rankings,
-    parse_number,
-    score_direction,
-    score_lower_better,
-    score_pe,
-    score_positive,
-    score_rsi,
-)
+import investing.core.ranking as ranking_module
+
+# Streamlit can retain imported application modules across source hot reloads.
+# Reload when the cached ranking API predates fields required by this UI.
+if getattr(ranking_module, "RANKING_API_VERSION", 0) < 2:
+    ranking_module = importlib.reload(ranking_module)
+
+build_rankings = ranking_module.build_rankings
+build_sector_fundamental_score = ranking_module.build_sector_fundamental_score
+parse_number = ranking_module.parse_number
+sector_profile_frame = ranking_module.sector_profile_frame
+score_direction = ranking_module.score_direction
+score_lower_better = ranking_module.score_lower_better
+score_pe = ranking_module.score_pe
+score_positive = ranking_module.score_positive
+score_rsi = ranking_module.score_rsi
 from investing.core.watchlist import (
     WATCHLIST_FIELDS,
     analyze_watchlist,
@@ -31,16 +39,17 @@ from investing.core.watchlist import (
     read_watchlist,
     write_watchlist,
 )
-from investing.data_fetch.stock_universe import fetch_stock_universe
 from investing.db.duckdb_store import (
     init_db,
     query_latest_analysis_snapshots,
     query_stock_universe,
-    save_analysis_snapshots,
-    save_fundamental_snapshot,
-    save_stock_history,
-    save_stock_universe,
 )
+from investing.pipeline.updates import (
+    analyze_universe_frame as pipeline_analyze_universe_frame,
+    persist_analysis_results as pipeline_persist_analysis_results,
+    refresh_stock_universe as pipeline_refresh_stock_universe,
+)
+from investing.pipeline.config import PipelineSettings
 
 
 def split_csv(value: str) -> list[str]:
@@ -235,6 +244,28 @@ def analysis_filter_controls(frame: pd.DataFrame) -> pd.DataFrame:
         filtered = apply_range_filter(filtered, "rsi", lower, upper)
 
     st.caption("Fundamental criteria")
+    if st.checkbox("Sector fundamental score >=", value=False, key="analysis_filter_use_fundamental_score"):
+        threshold = st.number_input(
+            "Minimum sector fundamental score",
+            min_value=0.0,
+            max_value=100.0,
+            value=50.0,
+            step=5.0,
+            key="analysis_filter_fundamental_score",
+        )
+        filtered = apply_min_filter(filtered, "sector_fundamental_score", threshold)
+
+    if st.checkbox("Fundamental data coverage >=", value=False, key="analysis_filter_use_fundamental_coverage"):
+        threshold = st.number_input(
+            "Minimum fundamental coverage %",
+            min_value=0.0,
+            max_value=100.0,
+            value=60.0,
+            step=5.0,
+            key="analysis_filter_fundamental_coverage",
+        )
+        filtered = apply_min_filter(filtered, "fundamental_coverage", threshold)
+
     if st.checkbox("P/E <=", value=False, key="analysis_filter_use_pe"):
         threshold = st.number_input("Maximum P/E", value=25.0, step=1.0, format="%.3f", key="analysis_filter_pe")
         filtered = apply_max_filter(filtered, "pe_ratio", threshold)
@@ -242,6 +273,27 @@ def analysis_filter_controls(frame: pd.DataFrame) -> pd.DataFrame:
     if st.checkbox("Dividend yield >=", value=False, key="analysis_filter_use_dividend"):
         threshold = st.number_input("Minimum dividend yield %", value=0.0, step=0.5, format="%.3f", key="analysis_filter_dividend")
         filtered = apply_min_filter(filtered, "dividend_yield", threshold / 100)
+
+    if st.checkbox("Dividend quality score >=", value=False, key="analysis_filter_use_dividend_score"):
+        threshold = st.number_input(
+            "Minimum dividend quality score",
+            min_value=0.0,
+            max_value=100.0,
+            value=50.0,
+            step=5.0,
+            key="analysis_filter_dividend_score",
+        )
+        filtered = apply_min_filter(filtered, "dividend_score", threshold)
+
+    if st.checkbox("Consecutive dividend years >=", value=False, key="analysis_filter_use_dividend_years"):
+        threshold = st.number_input(
+            "Minimum consecutive dividend years",
+            min_value=0,
+            value=5,
+            step=1,
+            key="analysis_filter_dividend_years",
+        )
+        filtered = apply_min_filter(filtered, "consecutive_dividend_years", threshold)
 
     if st.checkbox("Revenue growth >=", value=False, key="analysis_filter_use_revenue_growth"):
         threshold = st.number_input("Minimum revenue growth %", value=0.0, step=1.0, format="%.3f", key="analysis_filter_revenue_growth")
@@ -391,28 +443,13 @@ def build_spider_chart(frame: pd.DataFrame, selected_symbols: list[str]) -> go.F
 
 
 def analyze_universe(universe: pd.DataFrame, days: int, min_score: float, max_volatility: float, data_source: str) -> list[dict]:
-    results: list[dict] = []
-    for row in universe.itertuples(index=False):
-        analyzed = analyze_stocks(
-            [row.symbol],
-            country=row.country,
-            days=days,
-            min_score=min_score,
-            max_volatility=max_volatility,
-            data_source=data_source,
-        )
-        if not analyzed:
-            continue
-        result = analyzed[0]
-        if not result.get("name") or result.get("name") == row.symbol:
-            result["name"] = row.name
-        if not result.get("exchange"):
-            result["exchange"] = row.exchange_mic or row.market or row.exchange
-        result["yahoo_symbol"] = row.yahoo_symbol
-        result["universe_market"] = row.market
-        result["universe_isin"] = row.isin
-        results.append(result)
-    return results
+    return pipeline_analyze_universe_frame(
+        universe,
+        days=days,
+        min_score=min_score,
+        max_volatility=max_volatility,
+        data_source=data_source,
+    )
 
 
 def scorecard_frame(results: list[dict]) -> pd.DataFrame:
@@ -424,6 +461,7 @@ def scorecard_frame(results: list[dict]) -> pd.DataFrame:
         scorecard = result.get("scorecard", {})
         technical = result.get("technical", {})
         fundamentals = result.get("fundamentals", {})
+        sector_scoring = build_sector_fundamental_score(fundamentals)
         rows.append(
             {
                 "symbol": result.get("symbol"),
@@ -432,6 +470,7 @@ def scorecard_frame(results: list[dict]) -> pd.DataFrame:
                 "country": result.get("country"),
                 "exchange": result.get("exchange"),
                 "data_source": result.get("data_source"),
+                "fundamental_data_source": result.get("fundamental_data_source"),
                 "last_run_at": format_timestamp(result.get("last_run_at")),
                 "cached": bool(result.get("cached", False)),
                 "recommended": scorecard.get("recommended"),
@@ -443,8 +482,15 @@ def scorecard_frame(results: list[dict]) -> pd.DataFrame:
                 "rsi": parse_number(technical.get("rsi")),
                 "pe_ratio": parse_number(fundamentals.get("pe_ratio")),
                 "dividend_yield": parse_number(fundamentals.get("dividend_yield")),
+                "dividend_score": sector_scoring.get("dividend_score"),
+                "dividend_coverage": sector_scoring.get("dividend_coverage"),
+                "dividend_years_paid": parse_number(fundamentals.get("dividend_years_paid")),
+                "consecutive_dividend_years": parse_number(fundamentals.get("consecutive_dividend_years")),
+                "dividend_cagr_5y": parse_number(fundamentals.get("dividend_cagr_5y")),
                 "sector": fundamentals.get("sector"),
                 "industry": fundamentals.get("industry"),
+                "sector_fundamental_score": sector_scoring.get("fundamental_score"),
+                "fundamental_coverage": sector_scoring.get("fundamental_coverage"),
                 "revenue_growth": parse_number(fundamentals.get("revenue_growth")),
                 "earnings_growth": parse_number(fundamentals.get("earnings_growth")),
                 "return_on_equity": parse_number(fundamentals.get("return_on_equity")),
@@ -452,40 +498,20 @@ def scorecard_frame(results: list[dict]) -> pd.DataFrame:
                 "debt_to_equity": parse_number(fundamentals.get("debt_to_equity")),
                 "current_ratio": parse_number(fundamentals.get("current_ratio")),
                 "free_cashflow": parse_number(fundamentals.get("free_cashflow")),
+                "free_cashflow_yield": parse_number(fundamentals.get("free_cashflow_yield")),
+                "price_to_book": parse_number(fundamentals.get("price_to_book")),
+                "enterprise_to_ebitda": parse_number(fundamentals.get("enterprise_to_ebitda")),
+                "peg_ratio": parse_number(fundamentals.get("peg_ratio")),
+                "payout_ratio": parse_number(fundamentals.get("payout_ratio")),
+                "return_on_assets": parse_number(fundamentals.get("return_on_assets")),
+                "operating_margins": parse_number(fundamentals.get("operating_margins")),
+                "funds_from_operations_yield": parse_number(fundamentals.get("funds_from_operations_yield")),
                 "altman_z_score": parse_number(fundamentals.get("altman_z_score")),
                 "altman_z_zone": fundamentals.get("altman_z_zone") or "Unavailable",
                 "error": "",
             }
         )
     return pd.DataFrame(rows)
-
-
-def save_results(results: list[dict], fallback_source: str) -> int:
-    count = 0
-    for result in results:
-        if result.get("error"):
-            continue
-        data = result.get("data")
-        if not isinstance(data, pd.DataFrame) or data.empty:
-            continue
-        save_stock_history(
-            data,
-            ticker=result["symbol"],
-            name=result["name"],
-            country=result["country"],
-            exchange=result.get("exchange", ""),
-            data_source=result.get("data_source", fallback_source),
-        )
-        save_fundamental_snapshot(
-            result.get("fundamentals", {}),
-            ticker=result["symbol"],
-            name=result["name"],
-            country=result["country"],
-            exchange=result.get("exchange", ""),
-            data_source=result.get("data_source", fallback_source),
-        )
-        count += 1
-    return count
 
 
 def store_analysis_results(
@@ -495,29 +521,14 @@ def store_analysis_results(
     min_score: float,
     max_volatility: float,
 ) -> tuple[int, int]:
-    existing_timestamps = [
-        pd.to_datetime(result.get("last_run_at"))
-        for result in results
-        if result.get("last_run_at")
-    ]
-    run_timestamp = (
-        max(existing_timestamps).to_pydatetime()
-        if existing_timestamps
-        else pd.Timestamp.now().to_pydatetime()
-    )
-    for result in results:
-        if not result.get("last_run_at"):
-            result["last_run_at"] = run_timestamp
-        result["cached"] = bool(result.get("cached", False))
-    saved_history = save_results(results, fallback_source=fallback_source)
-    saved_snapshots = save_analysis_snapshots(
+    persisted = pipeline_persist_analysis_results(
         results,
         days=days,
         min_score=min_score,
         max_volatility=max_volatility,
-        run_timestamp=run_timestamp,
+        fallback_source=fallback_source,
     )
-    return saved_history, saved_snapshots
+    return persisted["price_histories"], persisted["analysis_snapshots"]
 
 
 def load_saved_analysis_for_rows(universe: pd.DataFrame) -> list[dict]:
@@ -601,6 +612,7 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
                 f"{symbol} ({result.get('name', '')})",
                 f" Country: {result.get('country', '')} | Exchange: {result.get('exchange', '')}",
                 f" Data source: {result.get('data_source', fallback_source)} | Yahoo: {result.get('yahoo_symbol', '')}",
+                f" Fundamental source: {result.get('fundamental_data_source', fallback_source)}",
                 f" Recommended: {scorecard.get('recommended')} | Reason: {scorecard.get('reason')}",
                 f" Score: {format_decimal(scorecard.get('score'))} | Volatility: {format_decimal(scorecard.get('volatility'))}",
                 f" Price change: {format_percent(scorecard.get('price_change'))} | Latest close: {format_decimal(scorecard.get('latest_close'))}",
@@ -608,12 +620,23 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
             ]
         )
         if fundamentals:
+            sector_scoring = build_sector_fundamental_score(fundamentals)
             lines.append(
                 " Fundamental P/E: "
                 f"{fundamentals.get('pe_ratio', 'n/a')} | EPS: {fundamentals.get('eps', 'n/a')} | "
                 f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')} | "
                 f"Altman Z: {fundamentals.get('altman_z_score', 'n/a')} "
                 f"({fundamentals.get('altman_z_zone', 'Unavailable')})"
+            )
+            lines.append(
+                f" Sector fundamentals: {sector_scoring['fundamental_score']:.3f}/100 | "
+                f"Profile: {sector_scoring['sector_profile']} | "
+                f"Coverage: {sector_scoring['fundamental_coverage']:.1f}%"
+            )
+            lines.append(
+                f" Dividend quality: {format_decimal(sector_scoring.get('dividend_score'))}/100 | "
+                f"Years paid: {fundamentals.get('dividend_years_paid', 'n/a')} | "
+                f"Consecutive years: {fundamentals.get('consecutive_dividend_years', 'n/a')}"
             )
         lines.append("")
     return "\n".join(lines).strip()
@@ -652,7 +675,8 @@ with st.sidebar:
     country_text = st.text_input("Countries", value="norway")
     countries = split_csv(country_text)
     universe_source = st.selectbox("Universe source", ["auto", "euronext", "investpy"], index=0)
-    data_source = st.selectbox("Market data", ["yahoo", "auto", "investing"], index=0)
+    data_source = st.selectbox("Market data", ["auto", "yahoo", "investing"], index=0)
+    st.caption("Auto queries both providers, prefers Yahoo values, and fills gaps from Investing.com.")
     days = st.number_input("History days", min_value=30, max_value=3650, value=365, step=30)
     min_score = st.number_input("Min score", min_value=-1.0, max_value=1.0, value=0.01, step=0.01, format="%.2f")
     max_volatility = st.number_input("Max volatility", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.2f")
@@ -660,9 +684,13 @@ with st.sidebar:
 
     if st.button("Refresh Universe", width="stretch"):
         with st.spinner("Refreshing stock universe"):
-            universe = fetch_stock_universe(countries=countries, source=universe_source)
-            saved = save_stock_universe(universe, replace_countries=countries)
-        st.success(f"Saved {saved} rows")
+            settings = replace(
+                PipelineSettings.from_env(),
+                countries=tuple(countries),
+                universe_source=universe_source,
+            )
+            refresh_result = pipeline_refresh_stock_universe(settings)
+        st.success(f"Saved {refresh_result['rows']} rows")
 
 base_universe = query_stock_universe(countries=countries)
 if base_universe.empty:
@@ -956,11 +984,18 @@ with tab_rankings:
     if not results:
         st.info("Run analysis first, then build rankings.")
     else:
+        st.caption(
+            "Fundamental scores use sector-specific indicator weights. Missing values score neutrally; "
+            "coverage shows how much of the profile had reported data."
+        )
+        with st.expander("View sector indicator profiles"):
+            st.dataframe(sector_profile_frame(), width="stretch", hide_index=True)
+
         group_options = {
+            "Sector": "sector",
             "Correlation cluster": "correlation_cluster",
             "Market": "market",
             "Country": "country",
-            "Sector": "sector",
             "Industry": "industry",
             "Technical direction": "technical_direction",
             "Recommendation": "recommendation",
@@ -971,7 +1006,7 @@ with tab_rankings:
         }
         rank_left, rank_right = st.columns([1, 1])
         selected_group_label = rank_left.selectbox("Group stocks by", list(group_options.keys()))
-        technical_weight = rank_right.slider("Technical weight", 0.0, 1.0, 0.55, 0.05)
+        technical_weight = rank_right.slider("Technical weight", 0.0, 1.0, 0.35, 0.05)
 
         if st.button("Build Rankings", type="primary"):
             group_by = group_options[selected_group_label]
@@ -1000,14 +1035,27 @@ with tab_rankings:
             ranking_columns = [
                 "group",
                 "group_rank",
+                "sector_rank",
+                "sector_percentile",
                 "symbol",
                 "name",
                 "ranking_score",
                 "technical_score",
                 "fundamental_score",
+                "fundamental_coverage",
+                "dividend_score",
+                "dividend_coverage",
+                "primary_indicators",
                 "direction",
                 "pe_ratio",
+                "price_to_book",
+                "enterprise_to_ebitda",
+                "free_cashflow_yield",
+                "funds_from_operations_yield",
                 "dividend_yield",
+                "dividend_years_paid",
+                "consecutive_dividend_years",
+                "dividend_cagr_5y",
                 "altman_z_score",
                 "altman_z_zone",
                 "volatility",
@@ -1023,7 +1071,7 @@ with tab_rankings:
                 x="symbol",
                 y="ranking_score",
                 color="group",
-                hover_data=["name", "technical_score", "fundamental_score"],
+                hover_data=["name", "technical_score", "fundamental_score", "fundamental_coverage"],
             )
             chart.update_layout(height=520, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(chart, width="stretch")

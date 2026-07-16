@@ -17,11 +17,14 @@ def analyze_stock(
 ) -> dict:
     data_source = data_source.strip().lower()
     raw_df = get_stock_data(symbol, country=country, days=days, source=data_source)
+    effective_price_source = raw_df.attrs.get("data_source", data_source)
+    price_providers = raw_df.attrs.get("providers_used", [effective_price_source])
     df = add_technical_indicators(raw_df)
     metrics = compute_stock_metrics(df)
     scorecard = build_scorecard(metrics, min_score=min_score, max_volatility=max_volatility)
     technical = compute_technical_overview(df)
     fundamentals = get_stock_fundamentals(symbol, country=country, source=data_source)
+    fundamental_providers = fundamentals.get("providers_used", [])
 
     name = symbol
     exchange = ""
@@ -38,7 +41,11 @@ def analyze_stock(
         "name": name,
         "country": country,
         "exchange": exchange,
-        "data_source": data_source,
+        "data_source": effective_price_source,
+        "requested_data_source": data_source,
+        "price_providers": price_providers,
+        "fundamental_providers": fundamental_providers,
+        "fundamental_data_source": "+".join(fundamental_providers) or data_source,
         "data": df,
         "metrics": metrics,
         "scorecard": scorecard,

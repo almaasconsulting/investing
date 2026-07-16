@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import math
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -257,6 +258,151 @@ def _format_change(value: Any) -> Any:
     return value
 
 
+def _ratio(numerator: Any, denominator: Any) -> float | None:
+    try:
+        numerator = float(numerator)
+        denominator = float(denominator)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numerator) or not math.isfinite(denominator) or denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def _has_value(value: Any) -> bool:
+    if value is None or value == "" or value == "N/A":
+        return False
+    try:
+        return not bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return True
+
+
+def merge_fundamentals(
+    yahoo: dict[str, Any],
+    investing: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge provider fundamentals field-by-field with Yahoo precedence."""
+    merged: dict[str, Any] = {}
+    field_sources: dict[str, str] = {}
+    for key in dict.fromkeys([*yahoo, *investing]):
+        if _has_value(yahoo.get(key)):
+            merged[key] = yahoo[key]
+            field_sources[key] = "yahoo"
+        elif _has_value(investing.get(key)):
+            merged[key] = investing[key]
+            field_sources[key] = "investing"
+        else:
+            merged[key] = None
+
+    providers_used = [
+        provider
+        for provider in ("yahoo", "investing")
+        if provider in field_sources.values()
+    ]
+    merged["field_sources"] = field_sources
+    merged["providers_used"] = providers_used
+    merged["provider_payloads"] = {"yahoo": yahoo, "investing": investing}
+    return merged
+
+
+def compute_dividend_history_metrics(dividends: Any) -> dict[str, Any]:
+    """Summarize annual dividend payments from a Series or provider DataFrame."""
+    if isinstance(dividends, pd.Series):
+        frame = pd.DataFrame({"date": dividends.index, "amount": dividends.values})
+    elif isinstance(dividends, pd.DataFrame) and not dividends.empty:
+        date_column = next(
+            (column for column in dividends.columns if str(column).lower() in {"date", "payment date"}),
+            None,
+        )
+        amount_column = next(
+            (column for column in dividends.columns if str(column).lower() in {"dividend", "amount"}),
+            None,
+        )
+        if date_column is None:
+            frame = dividends.reset_index()
+            date_column = frame.columns[0]
+        else:
+            frame = dividends.copy()
+        if amount_column is None:
+            candidates = [column for column in frame.columns if column != date_column]
+            amount_column = candidates[0] if candidates else None
+        if amount_column is None:
+            return {}
+        frame = frame[[date_column, amount_column]].rename(
+            columns={date_column: "date", amount_column: "amount"}
+        )
+    elif dividends is not None:
+        return {
+            "dividend_years_paid": 0,
+            "consecutive_dividend_years": 0,
+            "dividend_cagr_5y": None,
+        }
+    else:
+        return {}
+
+    if frame.empty:
+        return {
+            "dividend_years_paid": 0,
+            "consecutive_dividend_years": 0,
+            "dividend_cagr_5y": None,
+        }
+
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["amount"] = pd.to_numeric(
+        frame["amount"].astype(str).str.replace(r"[^0-9.\-]", "", regex=True),
+        errors="coerce",
+    )
+    frame = frame.dropna(subset=["date", "amount"])
+    frame = frame[frame["amount"] > 0]
+    if frame.empty:
+        return {
+            "dividend_years_paid": 0,
+            "consecutive_dividend_years": 0,
+            "dividend_cagr_5y": None,
+        }
+
+    annual = frame.groupby(frame["date"].dt.year)["amount"].sum().sort_index()
+    latest_year = int(annual.index.max())
+    current_year = date.today().year
+    consecutive_years = 0
+    if latest_year >= current_year - 1:
+        year = latest_year
+        while year in annual.index and annual.loc[year] > 0:
+            consecutive_years += 1
+            year -= 1
+
+    completed = annual[annual.index < current_year]
+    recent = completed.tail(6)
+    dividend_cagr = None
+    if len(recent) >= 2:
+        year_span = int(recent.index[-1] - recent.index[0])
+        if year_span > 0 and recent.iloc[0] > 0 and recent.iloc[-1] > 0:
+            dividend_cagr = float((recent.iloc[-1] / recent.iloc[0]) ** (1 / year_span) - 1)
+
+    return {
+        "dividend_years_paid": int(len(annual)),
+        "consecutive_dividend_years": consecutive_years,
+        "dividend_cagr_5y": dividend_cagr,
+        "latest_dividend_year": latest_year,
+    }
+
+
+def _get_yahoo_dividend_metrics(ticker: yf.Ticker) -> dict[str, Any]:
+    try:
+        return compute_dividend_history_metrics(ticker.dividends)
+    except Exception:
+        return {}
+
+
+def _get_investing_dividend_metrics(investpy: Any, symbol: str, country: str) -> dict[str, Any]:
+    try:
+        dividends = investpy.get_stock_dividends(stock=symbol, country=country)
+        return compute_dividend_history_metrics(dividends)
+    except Exception:
+        return {}
+
+
 def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "auto") -> dict[str, Any]:
     source = source.strip().lower()
     if source not in {"auto", "investing", "yahoo"}:
@@ -265,6 +411,7 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
     info = {}
     investing_fundamentals: dict[str, Any] = {}
     if source != "yahoo":
+        investpy = None
         try:
             investpy = _load_investpy()
             info = investpy.get_stock_information(stock=symbol, country=country, as_json=True)
@@ -282,8 +429,12 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
             "revenue": _lookup_fundamental(info, ["Revenue"]),
             "prev_close": _lookup_fundamental(info, ["Prev. Close"]),
         }
+        if investpy is not None:
+            investing_fundamentals.update(
+                _get_investing_dividend_metrics(investpy, symbol, country)
+            )
         if source == "investing":
-            return investing_fundamentals
+            return merge_fundamentals({}, investing_fundamentals)
 
     yahoo_symbol = _resolve_yahoo_symbol(symbol, country)
     try:
@@ -291,7 +442,7 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         info = ticker.info or {}
     except Exception:
         if any(investing_fundamentals.values()):
-            return investing_fundamentals
+            return merge_fundamentals({}, investing_fundamentals)
         raise
     yahoo_fundamentals = {
         "market_cap": info.get("marketCap"),
@@ -308,16 +459,26 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         "revenue_growth": info.get("revenueGrowth"),
         "earnings_growth": info.get("earningsGrowth"),
         "return_on_equity": info.get("returnOnEquity"),
+        "return_on_assets": info.get("returnOnAssets"),
         "profit_margins": info.get("profitMargins"),
+        "operating_margins": info.get("operatingMargins"),
+        "gross_margins": info.get("grossMargins"),
         "debt_to_equity": info.get("debtToEquity"),
         "current_ratio": info.get("currentRatio"),
         "free_cashflow": info.get("freeCashflow"),
+        "free_cashflow_yield": _ratio(info.get("freeCashflow"), info.get("marketCap")),
+        "price_to_book": info.get("priceToBook"),
+        "enterprise_to_ebitda": info.get("enterpriseToEbitda"),
+        "peg_ratio": info.get("pegRatio") or info.get("trailingPegRatio"),
+        "payout_ratio": info.get("payoutRatio"),
+        "funds_from_operations": info.get("fundsFromOperations"),
+        "funds_from_operations_yield": _ratio(info.get("fundsFromOperations"), info.get("marketCap")),
+        **_get_yahoo_dividend_metrics(ticker),
         **_get_altman_fundamentals(ticker, info),
     }
-    return {
-        **yahoo_fundamentals,
-        **{key: value for key, value in investing_fundamentals.items() if value not in (None, "", "N/A")},
-    }
+    if source == "yahoo":
+        return merge_fundamentals(yahoo_fundamentals, {})
+    return merge_fundamentals(yahoo_fundamentals, investing_fundamentals)
 
 
 def format_fundamental_label(key: str) -> str:

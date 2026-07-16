@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: main
+    tables:
+      - name: stock_universe
+      - name: stock_history
+      - name: fundamental_snapshot
+      - name: analysis_snapshot

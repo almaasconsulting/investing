@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,7 +29,12 @@ STOCK_UNIVERSE_COLUMNS = [
 
 
 def get_db_path() -> Path:
-    path = Path(__file__).resolve().parents[1] / DB_FILENAME
+    configured_path = os.getenv("INVESTING_DB_PATH", "").strip()
+    path = (
+        Path(configured_path).expanduser().resolve()
+        if configured_path
+        else Path(__file__).resolve().parents[1] / DB_FILENAME
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -55,7 +61,19 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
             ma200 DOUBLE,
             rsi14 DOUBLE,
             direction VARCHAR,
-            signal_summary VARCHAR
+            signal_summary VARCHAR,
+            price_source VARCHAR,
+            yahoo_open DOUBLE,
+            yahoo_high DOUBLE,
+            yahoo_low DOUBLE,
+            yahoo_close DOUBLE,
+            yahoo_volume DOUBLE,
+            investing_open DOUBLE,
+            investing_high DOUBLE,
+            investing_low DOUBLE,
+            investing_close DOUBLE,
+            investing_volume DOUBLE,
+            ingested_at TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS fundamental_snapshot (
             snapshot_date DATE,
@@ -83,7 +101,24 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
             current_ratio DOUBLE,
             free_cashflow DOUBLE,
             altman_z_score DOUBLE,
-            altman_z_zone VARCHAR
+            altman_z_zone VARCHAR,
+            return_on_assets DOUBLE,
+            operating_margins DOUBLE,
+            gross_margins DOUBLE,
+            free_cashflow_yield DOUBLE,
+            price_to_book DOUBLE,
+            enterprise_to_ebitda DOUBLE,
+            peg_ratio DOUBLE,
+            payout_ratio DOUBLE,
+            funds_from_operations DOUBLE,
+            funds_from_operations_yield DOUBLE,
+            dividend_years_paid INTEGER,
+            consecutive_dividend_years INTEGER,
+            dividend_cagr_5y DOUBLE,
+            latest_dividend_year INTEGER,
+            field_sources_json VARCHAR,
+            provider_payloads_json VARCHAR,
+            ingested_at TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS stock_universe (
             symbol VARCHAR,
@@ -124,6 +159,13 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
         """
     )
     con.execute("ALTER TABLE stock_history ADD COLUMN IF NOT EXISTS data_source VARCHAR;")
+    con.execute("ALTER TABLE stock_history ADD COLUMN IF NOT EXISTS price_source VARCHAR;")
+    for provider in ("yahoo", "investing"):
+        for field in ("open", "high", "low", "close", "volume"):
+            con.execute(
+                f"ALTER TABLE stock_history ADD COLUMN IF NOT EXISTS {provider}_{field} DOUBLE;"
+            )
+    con.execute("ALTER TABLE stock_history ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMP;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS data_source VARCHAR;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS sector VARCHAR;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS industry VARCHAR;")
@@ -136,6 +178,23 @@ def init_db(db_path: Path | None = None) -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS free_cashflow DOUBLE;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS altman_z_score DOUBLE;")
     con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS altman_z_zone VARCHAR;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS return_on_assets DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS operating_margins DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS gross_margins DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS free_cashflow_yield DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS price_to_book DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS enterprise_to_ebitda DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS peg_ratio DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS payout_ratio DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS funds_from_operations DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS funds_from_operations_yield DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS dividend_years_paid INTEGER;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS consecutive_dividend_years INTEGER;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS dividend_cagr_5y DOUBLE;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS latest_dividend_year INTEGER;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS field_sources_json VARCHAR;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS provider_payloads_json VARCHAR;")
+    con.execute("ALTER TABLE fundamental_snapshot ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMP;")
     con.execute("ALTER TABLE stock_universe ADD COLUMN IF NOT EXISTS yahoo_symbol VARCHAR;")
     con.execute("ALTER TABLE analysis_snapshot ADD COLUMN IF NOT EXISTS run_timestamp TIMESTAMP;")
     con.execute("ALTER TABLE analysis_snapshot ADD COLUMN IF NOT EXISTS yahoo_symbol VARCHAR;")
@@ -194,16 +253,36 @@ def save_stock_history(
     df["country"] = country
     df["exchange"] = exchange
     df["data_source"] = data_source
+    df["ingested_at"] = _utc_now()
 
-    for column in ["ma20", "ma50", "ma200", "rsi14", "direction", "signal_summary"]:
+    optional_columns = [
+        "ma20", "ma50", "ma200", "rsi14", "direction", "signal_summary", "price_source",
+        *[
+            f"{provider}_{field}"
+            for provider in ("yahoo", "investing")
+            for field in ("open", "high", "low", "close", "volume")
+        ],
+    ]
+    for column in optional_columns:
         if column not in df.columns:
             df[column] = None
 
     con.register("new_data", df)
     con.execute(
         """
-        INSERT INTO stock_history (date, ticker, name, country, exchange, data_source, open, high, low, close, volume, ma20, ma50, ma200, rsi14, direction, signal_summary)
-        SELECT date, ticker, name, country, exchange, data_source, open, high, low, close, volume, ma20, ma50, ma200, rsi14, direction, signal_summary
+        INSERT INTO stock_history (
+            date, ticker, name, country, exchange, data_source, open, high, low, close, volume,
+            ma20, ma50, ma200, rsi14, direction, signal_summary, price_source,
+            yahoo_open, yahoo_high, yahoo_low, yahoo_close, yahoo_volume,
+            investing_open, investing_high, investing_low, investing_close, investing_volume,
+            ingested_at
+        )
+        SELECT
+            date, ticker, name, country, exchange, data_source, open, high, low, close, volume,
+            ma20, ma50, ma200, rsi14, direction, signal_summary, price_source,
+            yahoo_open, yahoo_high, yahoo_low, yahoo_close, yahoo_volume,
+            investing_open, investing_high, investing_low, investing_close, investing_volume,
+            ingested_at
         FROM new_data
         """
     )
@@ -250,6 +329,23 @@ def save_fundamental_snapshot(
         "free_cashflow": fundamentals.get("free_cashflow"),
         "altman_z_score": fundamentals.get("altman_z_score"),
         "altman_z_zone": fundamentals.get("altman_z_zone"),
+        "return_on_assets": fundamentals.get("return_on_assets"),
+        "operating_margins": fundamentals.get("operating_margins"),
+        "gross_margins": fundamentals.get("gross_margins"),
+        "free_cashflow_yield": fundamentals.get("free_cashflow_yield"),
+        "price_to_book": fundamentals.get("price_to_book"),
+        "enterprise_to_ebitda": fundamentals.get("enterprise_to_ebitda"),
+        "peg_ratio": fundamentals.get("peg_ratio"),
+        "payout_ratio": fundamentals.get("payout_ratio"),
+        "funds_from_operations": fundamentals.get("funds_from_operations"),
+        "funds_from_operations_yield": fundamentals.get("funds_from_operations_yield"),
+        "dividend_years_paid": fundamentals.get("dividend_years_paid"),
+        "consecutive_dividend_years": fundamentals.get("consecutive_dividend_years"),
+        "dividend_cagr_5y": fundamentals.get("dividend_cagr_5y"),
+        "latest_dividend_year": fundamentals.get("latest_dividend_year"),
+        "field_sources_json": _to_json(fundamentals.get("field_sources", {})),
+        "provider_payloads_json": _to_json(fundamentals.get("provider_payloads", {})),
+        "ingested_at": _utc_now(),
     }
     df = pd.DataFrame([row])
     con.register("new_data", df)
@@ -260,14 +356,22 @@ def save_fundamental_snapshot(
             pe_ratio, eps, dividend_yield, beta, one_year_change, shares_outstanding,
             revenue, prev_close, sector, industry, revenue_growth, earnings_growth,
             return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow,
-            altman_z_score, altman_z_zone
+            altman_z_score, altman_z_zone, return_on_assets, operating_margins,
+            gross_margins, free_cashflow_yield, price_to_book, enterprise_to_ebitda,
+            peg_ratio, payout_ratio, funds_from_operations, funds_from_operations_yield,
+            dividend_years_paid, consecutive_dividend_years, dividend_cagr_5y,
+            latest_dividend_year, field_sources_json, provider_payloads_json, ingested_at
         )
         SELECT
             snapshot_date, ticker, name, country, exchange, data_source, market_cap,
             pe_ratio, eps, dividend_yield, beta, one_year_change, shares_outstanding,
             revenue, prev_close, sector, industry, revenue_growth, earnings_growth,
             return_on_equity, profit_margins, debt_to_equity, current_ratio, free_cashflow,
-            altman_z_score, altman_z_zone
+            altman_z_score, altman_z_zone, return_on_assets, operating_margins,
+            gross_margins, free_cashflow_yield, price_to_book, enterprise_to_ebitda,
+            peg_ratio, payout_ratio, funds_from_operations, funds_from_operations_yield,
+            dividend_years_paid, consecutive_dividend_years, dividend_cagr_5y,
+            latest_dividend_year, field_sources_json, provider_payloads_json, ingested_at
         FROM new_data
         """
     )

@@ -140,6 +140,49 @@ def _get_stock_data_investing(symbol: str, country: str, days: int) -> pd.DataFr
     return df
 
 
+def _prepare_history_for_merge(df: pd.DataFrame) -> pd.DataFrame:
+    prepared = df.copy()
+    dates = pd.to_datetime(prepared["date"])
+    if getattr(dates.dt, "tz", None) is not None:
+        dates = dates.dt.tz_localize(None)
+    prepared["date"] = dates.dt.normalize()
+    return prepared.drop_duplicates("date", keep="last").set_index("date").sort_index()
+
+
+def merge_stock_histories(yahoo: pd.DataFrame, investing: pd.DataFrame) -> pd.DataFrame:
+    """Merge daily OHLCV histories, preferring Yahoo values on each date."""
+    yahoo_prepared = _prepare_history_for_merge(yahoo)
+    investing_prepared = _prepare_history_for_merge(investing)
+    dates = yahoo_prepared.index.union(investing_prepared.index).sort_values()
+    merged = pd.DataFrame(index=dates)
+    value_columns = ["open", "high", "low", "close", "volume"]
+    for column in value_columns:
+        yahoo_values = yahoo_prepared[column].reindex(dates)
+        investing_values = investing_prepared[column].reindex(dates)
+        merged[column] = yahoo_values.combine_first(investing_values)
+        merged[f"yahoo_{column}"] = yahoo_values
+        merged[f"investing_{column}"] = investing_values
+
+    yahoo_values = yahoo_prepared.reindex(dates)[value_columns]
+    investing_values = investing_prepared.reindex(dates)[value_columns]
+    yahoo_contributed = yahoo_values.notna().any(axis=1)
+    investing_filled_gap = (yahoo_values.isna() & investing_values.notna()).any(axis=1)
+    merged["price_source"] = [
+        "yahoo+investing" if has_yahoo and filled_gap else "yahoo" if has_yahoo else "investing"
+        for has_yahoo, filled_gap in zip(yahoo_contributed, investing_filled_gap)
+    ]
+    merged = merged.reset_index(names="date")
+    source_values = merged["price_source"].astype(str)
+    providers_used = [
+        provider
+        for provider in ("yahoo", "investing")
+        if source_values.str.contains(provider, regex=False).any()
+    ]
+    merged.attrs["data_source"] = "+".join(providers_used)
+    merged.attrs["providers_used"] = providers_used
+    return merged
+
+
 def get_stock_data(
     symbol: str,
     country: str = "norway",
@@ -156,13 +199,30 @@ def get_stock_data(
     if source == "investing":
         return _get_stock_data_investing(symbol, country, days)
 
+    yahoo_data = None
+    investing_data = None
+    yahoo_error = None
+    investing_error = None
     try:
-        return _get_stock_data_investing(symbol, country, days)
+        yahoo_data = _get_stock_data_yahoo(symbol, country, days)
     except Exception as exc:
-        try:
-            return _get_stock_data_yahoo(symbol, country, days)
-        except Exception as yahoo_exc:
-            raise ValueError(
-                f"No data returned for {symbol} ({country}). "
-                f"Investing.com error: {exc}. Yahoo Finance error: {yahoo_exc}"
-            ) from yahoo_exc
+        yahoo_error = exc
+    try:
+        investing_data = _get_stock_data_investing(symbol, country, days)
+    except Exception as exc:
+        investing_error = exc
+
+    if yahoo_data is not None and investing_data is not None:
+        return merge_stock_histories(yahoo_data, investing_data)
+    if yahoo_data is not None:
+        yahoo_data.attrs["data_source"] = "yahoo"
+        yahoo_data.attrs["providers_used"] = ["yahoo"]
+        return yahoo_data
+    if investing_data is not None:
+        investing_data.attrs["data_source"] = "investing"
+        investing_data.attrs["providers_used"] = ["investing"]
+        return investing_data
+    raise ValueError(
+        f"No data returned for {symbol} ({country}). "
+        f"Yahoo Finance error: {yahoo_error}. Investing.com error: {investing_error}"
+    )
