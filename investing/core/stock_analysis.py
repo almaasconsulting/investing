@@ -8,6 +8,8 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from investing.data_fetch.investpy_compat import load_investpy
+
 
 def calculate_rsi(prices: pd.Series, period: int = 14) -> float:
     delta = prices.diff()
@@ -196,13 +198,12 @@ def _get_altman_fundamentals(ticker: yf.Ticker, info: dict[str, Any]) -> dict[st
 
 def _load_investpy() -> Any:
     try:
-        import investpy
+        return load_investpy()
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "Investing.com fundamentals require investpy and setuptools. "
             "Run: python -m pip install -r requirements.txt"
         ) from exc
-    return investpy
 
 
 def _parse_dividend_yield(value: Any) -> Any:
@@ -217,15 +218,18 @@ def _parse_dividend_yield(value: Any) -> Any:
 def _resolve_yahoo_symbol(symbol: str, country: str = "norway") -> str:
     mapping = {
         "norway": ".OL",
+        "canada": ".TO",
         "sweden": ".ST",
         "denmark": ".CO",
         "finland": ".HE",
+        "switzerland": ".SW",
         "netherlands": ".AS",
         "spain": ".MC",
         "italy": ".MI",
         "germany": ".DE",
         "france": ".PA",
         "uk": ".L",
+        "united kingdom": ".L",
     }
     symbol = symbol.strip()
     if "." in symbol:
@@ -348,7 +352,10 @@ def compute_dividend_history_metrics(dividends: Any) -> dict[str, Any]:
             "dividend_cagr_5y": None,
         }
 
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    # Provider dividend indexes can contain timezone-aware values from several
+    # exchanges.  Normalizing through UTC avoids pandas rejecting a mixed set
+    # of timezone-aware datetime objects.
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None)
     frame["amount"] = pd.to_numeric(
         frame["amount"].astype(str).str.replace(r"[^0-9.\-]", "", regex=True),
         errors="coerce",
@@ -389,10 +396,29 @@ def compute_dividend_history_metrics(dividends: Any) -> dict[str, Any]:
 
 
 def _get_yahoo_dividend_metrics(ticker: yf.Ticker) -> dict[str, Any]:
-    try:
-        return compute_dividend_history_metrics(ticker.dividends)
-    except Exception:
-        return {}
+    # Some Yahoo instruments reject the implicit ``period="max"`` used by
+    # ``Ticker.dividends`` and only advertise very short periods. Try the
+    # richest history first, then degrade without failing the stock batch.
+    for period in ("max", "5d", "1d"):
+        try:
+            history = ticker.history(
+                period=period,
+                interval="1d",
+                actions=True,
+                auto_adjust=False,
+                # Let the fallback loop handle unsupported periods. Without
+                # this, yfinance logs an ERROR before returning an empty frame.
+                raise_errors=True,
+            )
+        except Exception:
+            continue
+        if history is None or history.empty:
+            continue
+        dividends = history.get("Dividends")
+        if dividends is None:
+            return compute_dividend_history_metrics(pd.Series(dtype=float))
+        return compute_dividend_history_metrics(dividends)
+    return {}
 
 
 def _get_investing_dividend_metrics(investpy: Any, symbol: str, country: str) -> dict[str, Any]:

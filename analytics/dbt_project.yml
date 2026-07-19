@@ -10,8 +10,12 @@ clean-targets: ["target", "dbt_packages"]
 
 models:
   investing_analytics:
-    staging:
-      +materialized: view
-    marts:
+    bronze:
       +materialized: table
-      +schema: analytics
+      +schema: bronze
+    silver:
+      +materialized: table
+      +schema: silver
+    gold:
+      +materialized: table
+      +schema: gold

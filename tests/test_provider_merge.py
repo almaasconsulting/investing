@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
-from investing.core.stock_analysis import compute_dividend_history_metrics, merge_fundamentals
+from investing.core.stock_analysis import (
+    _get_yahoo_dividend_metrics,
+    compute_dividend_history_metrics,
+    merge_fundamentals,
+)
 from investing.data_fetch.investing_com import get_stock_data, merge_stock_histories
 
 
@@ -14,6 +18,28 @@ def history(rows: list[tuple]) -> pd.DataFrame:
 
 
 class ProviderMergeTests(unittest.TestCase):
+    def test_yahoo_dividends_fall_back_from_max_to_short_periods(self) -> None:
+        ticker = Mock()
+        ticker.history.side_effect = [
+            ValueError("max is unsupported"),
+            pd.DataFrame(),
+            pd.DataFrame(
+                {"Dividends": [0.25]},
+                index=pd.to_datetime(["2026-07-18"]),
+            ),
+        ]
+
+        metrics = _get_yahoo_dividend_metrics(ticker)
+
+        self.assertEqual(metrics["dividend_years_paid"], 1)
+        self.assertEqual(
+            [call.kwargs["period"] for call in ticker.history.call_args_list],
+            ["max", "5d", "1d"],
+        )
+        self.assertTrue(
+            all(call.kwargs["raise_errors"] for call in ticker.history.call_args_list)
+        )
+
     def test_dividend_history_counts_years_and_growth(self) -> None:
         dividends = pd.Series(
             [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6],

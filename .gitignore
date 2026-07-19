@@ -6,6 +6,12 @@ __pycache__/
 *.pyo
 *.pyd
 *.db
-*.duckdb
 data/
 .DS_Store
+.runtime-env.ps1
+.dagster/
+runtime/
+site/
+analytics/target/
+analytics/logs/
+analytics/.user.yml

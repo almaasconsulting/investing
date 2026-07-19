@@ -32,6 +32,16 @@ score_lower_better = ranking_module.score_lower_better
 score_pe = ranking_module.score_pe
 score_positive = ranking_module.score_positive
 score_rsi = ranking_module.score_rsi
+import investing.core.portfolio as portfolio_module
+import investing.core.watchlist as watchlist_module
+from investing.data_fetch.stock_universe import DEFAULT_MARKET_COUNTRIES
+
+# Pipeline updates added incremental fetch arguments to the portfolio service.
+# Reload both it and its watchlist consumer when Streamlit cached the old API.
+if getattr(portfolio_module, "PORTFOLIO_API_VERSION", 0) < 2:
+    portfolio_module = importlib.reload(portfolio_module)
+    watchlist_module = importlib.reload(watchlist_module)
+
 from investing.core.watchlist import (
     WATCHLIST_FIELDS,
     analyze_watchlist,
@@ -39,17 +49,106 @@ from investing.core.watchlist import (
     read_watchlist,
     write_watchlist,
 )
-from investing.db.duckdb_store import (
+from investing.db.store import (
     init_db,
+    query_financial_statement_trends,
     query_latest_analysis_snapshots,
+    query_stock_news,
     query_stock_universe,
 )
-from investing.pipeline.updates import (
-    analyze_universe_frame as pipeline_analyze_universe_frame,
-    persist_analysis_results as pipeline_persist_analysis_results,
-    refresh_stock_universe as pipeline_refresh_stock_universe,
-)
-from investing.pipeline.config import PipelineSettings
+import investing.pipeline.config as pipeline_config_module
+import investing.pipeline.updates as pipeline_updates_module
+
+# Streamlit retains imported modules across source reruns. Reload the pipeline
+# service and its settings class when the cached API predates incremental fields.
+if getattr(pipeline_updates_module, "PIPELINE_API_VERSION", 0) < 4:
+    pipeline_config_module = importlib.reload(pipeline_config_module)
+    pipeline_updates_module = importlib.reload(pipeline_updates_module)
+
+PipelineSettings = pipeline_config_module.PipelineSettings
+pipeline_analyze_universe_frame = pipeline_updates_module.analyze_universe_frame
+pipeline_build_medallion = pipeline_updates_module.build_medallion
+pipeline_persist_analysis_results = pipeline_updates_module.persist_analysis_results
+pipeline_refresh_stock_universe = pipeline_updates_module.refresh_stock_universe
+pipeline_refresh_stock_intelligence = pipeline_updates_module.refresh_stock_intelligence
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_stock_news(symbol: str, country: str) -> pd.DataFrame:
+    return query_stock_news(symbol, country=country, limit=50)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_statement_trends(
+    symbol: str,
+    country: str,
+    period_type: str,
+) -> pd.DataFrame:
+    return query_financial_statement_trends(
+        symbol,
+        country=country,
+        period_type=period_type,
+    )
+
+
+FUNDAMENTAL_TREND_METRICS = [
+    "revenue",
+    "gross_profit",
+    "operating_income",
+    "ebitda",
+    "net_income",
+    "diluted_eps",
+    "operating_cash_flow",
+    "capital_expenditure",
+    "free_cash_flow",
+    "cash_and_equivalents",
+    "total_debt",
+    "stockholders_equity",
+]
+
+
+def render_statement_history(frame: pd.DataFrame, period_label: str) -> None:
+    if frame.empty:
+        st.info(f"No {period_label.lower()} statement history has been ingested yet.")
+        return
+    available = frame["canonical_line_item"].dropna().astype(str).unique().tolist()
+    defaults = [metric for metric in FUNDAMENTAL_TREND_METRICS if metric in available][:5]
+    selected = st.multiselect(
+        f"{period_label} metrics",
+        sorted(available),
+        default=defaults,
+        key=f"statement_metrics_{period_label.lower()}",
+    )
+    filtered = frame[frame["canonical_line_item"].isin(selected)] if selected else frame
+    if selected:
+        chart = filtered.pivot_table(
+            index="fiscal_period_end",
+            columns="canonical_line_item",
+            values="value",
+            aggfunc="last",
+        ).sort_index()
+        st.line_chart(chart, width="stretch")
+    display_columns = [
+        "fiscal_period_end", "canonical_line_item", "value", "currency",
+        "period_change_pct", "year_over_year_pct", "selected_source",
+    ]
+    display_columns = [column for column in display_columns if column in filtered.columns]
+    display = filtered[display_columns].sort_values(
+        ["fiscal_period_end", "canonical_line_item"], ascending=[False, True]
+    )
+    formatters = {
+        "value": "{:,.2f}",
+        "period_change_pct": "{:+.1f}%",
+        "year_over_year_pct": "{:+.1f}%",
+    }
+    st.dataframe(
+        display.style.format(
+            {key: value for key, value in formatters.items() if key in display.columns},
+            na_rep="n/a",
+        ),
+        width="stretch",
+        hide_index=True,
+    )
 
 
 def split_csv(value: str) -> list[str]:
@@ -148,10 +247,58 @@ def round_numeric_frame(frame: pd.DataFrame, digits: int = 3) -> pd.DataFrame:
     return rounded
 
 
+RATIO_PERCENT_COLUMNS = {
+    "average_daily_return",
+    "volatility",
+    "price_change",
+    "dividend_yield",
+    "dividend_cagr_5y",
+    "revenue_growth",
+    "earnings_growth",
+    "return_on_equity",
+    "return_on_assets",
+    "profit_margins",
+    "operating_margins",
+    "gross_margins",
+    "free_cashflow_yield",
+    "funds_from_operations_yield",
+    "payout_ratio",
+    "one_year_change",
+}
+PERCENT_POINT_COLUMNS = {
+    "fundamental_coverage",
+    "dividend_coverage",
+    "sector_percentile",
+}
+
+
+def style_numeric_frame(frame: pd.DataFrame, digits: int = 3) -> pd.io.formats.style.Styler:
+    """Format financial ratios as percentages without changing their values."""
+    rounded = round_numeric_frame(frame, digits=digits)
+    formatters = {
+        column: "{:.2%}"
+        for column in RATIO_PERCENT_COLUMNS.intersection(rounded.columns)
+        if pd.api.types.is_numeric_dtype(rounded[column])
+    }
+    formatters.update(
+        {
+            column: "{:.1f}%"
+            for column in PERCENT_POINT_COLUMNS.intersection(rounded.columns)
+            if pd.api.types.is_numeric_dtype(rounded[column])
+        }
+    )
+    return rounded.style.format(formatters, na_rep="")
+
+
 def detail_frame(values: dict) -> pd.DataFrame:
     rows = []
     for key, value in values.items():
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if key in RATIO_PERCENT_COLUMNS:
+            display_value = format_percent(parse_number(value))
+        elif key in PERCENT_POINT_COLUMNS:
+            parsed = parse_number(value)
+            display_value = f"{parsed:.1f}%" if parsed is not None else ""
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
             display_value = f"{float(value):.3f}"
         elif value is None:
             display_value = ""
@@ -232,8 +379,8 @@ def analysis_filter_controls(frame: pd.DataFrame) -> pd.DataFrame:
         filtered = apply_min_filter(filtered, "score", threshold)
 
     if st.checkbox("Volatility <=", value=False, key="analysis_filter_use_volatility"):
-        threshold = st.number_input("Maximum volatility", value=0.06, step=0.01, format="%.3f", key="analysis_filter_volatility")
-        filtered = apply_max_filter(filtered, "volatility", threshold)
+        threshold = st.number_input("Maximum volatility %", value=6.0, step=1.0, format="%.2f", key="analysis_filter_volatility")
+        filtered = apply_max_filter(filtered, "volatility", threshold / 100)
 
     if st.checkbox("Price change >=", value=False, key="analysis_filter_use_price_change"):
         threshold = st.number_input("Minimum price change %", value=0.0, step=1.0, format="%.3f", key="analysis_filter_price_change")
@@ -528,13 +675,21 @@ def store_analysis_results(
         max_volatility=max_volatility,
         fallback_source=fallback_source,
     )
+    pipeline_build_medallion()
     return persisted["price_histories"], persisted["analysis_snapshots"]
 
 
-def load_saved_analysis_for_rows(universe: pd.DataFrame) -> list[dict]:
+@st.cache_data(ttl=300, show_spinner=False)
+def load_saved_analysis_for_rows(
+    universe: pd.DataFrame,
+    *,
+    include_history: bool = False,
+) -> list[dict]:
+    """Load lightweight snapshots; individual history is loaded in Stock View."""
     return query_latest_analysis_snapshots(
         countries=universe["country"].dropna().astype(str).unique().tolist(),
         symbols=selected_symbols(universe),
+        include_history=include_history,
     )
 
 
@@ -614,7 +769,7 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
                 f" Data source: {result.get('data_source', fallback_source)} | Yahoo: {result.get('yahoo_symbol', '')}",
                 f" Fundamental source: {result.get('fundamental_data_source', fallback_source)}",
                 f" Recommended: {scorecard.get('recommended')} | Reason: {scorecard.get('reason')}",
-                f" Score: {format_decimal(scorecard.get('score'))} | Volatility: {format_decimal(scorecard.get('volatility'))}",
+                f" Score: {format_decimal(scorecard.get('score'))} | Volatility: {format_percent(scorecard.get('volatility'))}",
                 f" Price change: {format_percent(scorecard.get('price_change'))} | Latest close: {format_decimal(scorecard.get('latest_close'))}",
                 f" Technical direction: {technical.get('direction', 'n/a')} | Signal: {technical.get('signal_summary', 'n/a')}",
             ]
@@ -624,7 +779,7 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
             lines.append(
                 " Fundamental P/E: "
                 f"{fundamentals.get('pe_ratio', 'n/a')} | EPS: {fundamentals.get('eps', 'n/a')} | "
-                f"Dividend yield: {fundamentals.get('dividend_yield', 'n/a')} | "
+                f"Dividend yield: {format_percent(parse_number(fundamentals.get('dividend_yield')))} | "
                 f"Altman Z: {fundamentals.get('altman_z_score', 'n/a')} "
                 f"({fundamentals.get('altman_z_zone', 'Unavailable')})"
             )
@@ -667,19 +822,48 @@ def build_correlation_groups(universe: pd.DataFrame, days: int, data_source: str
 
 
 st.set_page_config(page_title="Investing Workbench", layout="wide")
-init_db()
+_startup_connection = init_db()
+_startup_connection.close()
+
+
+@st.fragment(run_every="30s")
+def refresh_postgresql_cache() -> None:
+    """Clear cached queries so newly committed PostgreSQL data becomes visible."""
+    load_stock_news.clear()
+    load_statement_trends.clear()
+    load_saved_analysis_for_rows.clear()
+
+
+refresh_postgresql_cache()
 
 st.title("Investing Workbench")
 
 with st.sidebar:
-    country_text = st.text_input("Countries", value="norway")
-    countries = split_csv(country_text)
-    universe_source = st.selectbox("Universe source", ["auto", "euronext", "investpy"], index=0)
+    configured_countries = list(PipelineSettings.from_env().countries)
+    country_options = list(dict.fromkeys([
+        *DEFAULT_MARKET_COUNTRIES, *configured_countries
+    ]))
+    countries = st.multiselect(
+        "Countries",
+        options=country_options,
+        default=[country for country in configured_countries if country in country_options],
+        format_func=lambda country: country.title(),
+        help="Checked countries are included in universe discovery and filtering.",
+    )
+    universe_source = st.selectbox("Universe source", ["auto", "yahoo", "euronext", "investpy"], index=0)
     data_source = st.selectbox("Market data", ["auto", "yahoo", "investing"], index=0)
     st.caption("Auto queries both providers, prefers Yahoo values, and fills gaps from Investing.com.")
     days = st.number_input("History days", min_value=30, max_value=3650, value=365, step=30)
     min_score = st.number_input("Min score", min_value=-1.0, max_value=1.0, value=0.01, step=0.01, format="%.2f")
-    max_volatility = st.number_input("Max volatility", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.2f")
+    max_volatility_percent = st.number_input(
+        "Max volatility %",
+        min_value=0.0,
+        max_value=100.0,
+        value=6.0,
+        step=1.0,
+        format="%.2f",
+    )
+    max_volatility = max_volatility_percent / 100
     min_correlation = st.slider("Cluster correlation", min_value=-1.0, max_value=1.0, value=0.65, step=0.05)
 
     if st.button("Refresh Universe", width="stretch"):
@@ -692,21 +876,39 @@ with st.sidebar:
             refresh_result = pipeline_refresh_stock_universe(settings)
         st.success(f"Saved {refresh_result['rows']} rows")
 
+if not countries:
+    st.warning("Select at least one country in the sidebar.")
+    st.stop()
+
 base_universe = query_stock_universe(countries=countries)
 if base_universe.empty:
     st.warning("No stock universe rows found.")
     st.stop()
 
-market_options = sorted(
-    value
-    for value in set(base_universe["exchange_mic"].fillna("")) | set(base_universe["market"].fillna(""))
-    if value
-)
-default_markets = ["XOSL"] if "XOSL" in market_options else market_options[:1]
-selected_markets = st.multiselect("Markets", market_options, default=default_markets)
+market_label_to_value: dict[str, str] = {}
+for row in base_universe[["exchange_mic", "market"]].drop_duplicates().itertuples(index=False):
+    mic = str(row.exchange_mic or "").strip()
+    market = str(row.market or "").strip()
+    value = mic or market
+    if value:
+        market_label_to_value[f"{mic} - {market}" if mic and market else value] = value
+with st.sidebar:
+    selected_market_labels = st.multiselect(
+        "Markets",
+        options=sorted(market_label_to_value),
+        default=sorted(market_label_to_value),
+        help="Checked markets are included. Uncheck a market to exclude it.",
+    )
+selected_markets = [market_label_to_value[label] for label in selected_market_labels]
+if not selected_markets:
+    st.warning("Select at least one market in the sidebar.")
+    st.stop()
 stock_search = st.text_input("Search ticker or company", value="")
 
-universe = query_stock_universe(countries=countries, markets=selected_markets)
+universe = query_stock_universe(
+    countries=countries,
+    markets=selected_markets,
+)
 universe = filter_universe_by_search(universe, stock_search)
 analyze_all = st.checkbox("Use all filtered stocks", value=False)
 
@@ -765,7 +967,7 @@ if auto_loaded_cache:
         (pd.to_datetime(result.get("last_run_at")) for result in st.session_state["analysis_results"] if result.get("last_run_at")),
         default=None,
     )
-    st.info(f"Loaded saved analysis from DuckDB. Latest run: {format_timestamp(latest_run)}")
+    st.info(f"Loaded saved analysis from PostgreSQL. Latest run: {format_timestamp(latest_run)}")
 
 tab_universe, tab_watchlist, tab_stock_view, tab_analysis, tab_spider, tab_rankings, tab_clusters = st.tabs(
     ["Universe", "Watchlist", "Stock View", "Analysis", "Spider", "Rankings", "Clusters"]
@@ -838,42 +1040,182 @@ with tab_watchlist:
         st.success(f"Saved {saved_snapshots} analysis snapshots and {saved_history} price histories")
 
 with tab_stock_view:
+    if not universe.empty:
+        stock_rows = universe.drop_duplicates(["symbol", "country"]).copy()
+        stock_rows["_stock_view_label"] = stock_rows.apply(
+            lambda row: (
+                f"{row.get('symbol', '')} | {row.get('country', 'norway')} | "
+                f"{row.get('name', '')}"
+            ),
+            axis=1,
+        )
+        stock_lookup = {
+            str(row["_stock_view_label"]): row
+            for row in stock_rows.to_dict("records")
+        }
+        open_left, open_right = st.columns([4, 1])
+        open_label = open_left.selectbox(
+            "Open any universe stock",
+            sorted(stock_lookup),
+            key="stock_view_universe_stock",
+        )
+        if open_right.button("Open stock", key="stock_view_open_stock"):
+            stock_row = stock_lookup[open_label]
+            stock_symbol = str(stock_row.get("symbol") or "")
+            stock_country = str(stock_row.get("country") or "norway").lower()
+            with st.spinner(f"Loading {stock_symbol}"):
+                loaded = query_latest_analysis_snapshots(
+                    countries=[stock_country],
+                    symbols=[stock_symbol],
+                )
+                if not loaded:
+                    loaded = portfolio_module.analyze_stocks(
+                        [stock_symbol],
+                        country=stock_country,
+                        days=int(days),
+                        min_score=float(min_score),
+                        max_volatility=float(max_volatility),
+                        data_source=data_source,
+                    )
+                    if loaded and not loaded[0].get("error"):
+                        loaded[0]["session_only"] = True
+                        loaded[0].setdefault("name", stock_row.get("name") or stock_symbol)
+                        loaded[0].setdefault("exchange", stock_row.get("exchange") or "")
+                        loaded[0]["yahoo_symbol"] = stock_row.get("yahoo_symbol") or ""
+                        loaded[0]["universe_market"] = stock_row.get("market") or ""
+                        loaded[0]["universe_isin"] = stock_row.get("isin") or ""
+
+            if loaded and loaded[0].get("error"):
+                st.error(str(loaded[0]["error"]))
+            elif loaded:
+                current = st.session_state.get("analysis_results", [])
+                loaded_key = (stock_symbol.upper(), stock_country)
+                current = [
+                    item for item in current
+                    if (
+                        str(item.get("symbol", "")).upper(),
+                        str(item.get("country", "norway")).lower(),
+                    ) != loaded_key
+                ]
+                st.session_state["analysis_results"] = [loaded[0], *current]
+                st.success(
+                    "Stock loaded. Live results remain in this browser session; "
+                    "Dagster continues writing independently."
+                )
+        st.caption(
+            "Cached stocks are read from PostgreSQL. Stocks not yet processed are "
+            "analyzed live without writing to the database."
+        )
+
     results = st.session_state.get("analysis_results", [])
     if not results:
-        st.info("Run analysis first to inspect individual stocks.")
+        st.info("Choose a universe stock above and click Open stock.")
     else:
-        result_by_symbol = {result.get("symbol"): result for result in results if result.get("symbol")}
-        selected_symbol = st.selectbox("Stock", sorted(result_by_symbol.keys()))
-        result = result_by_symbol[selected_symbol]
+        result_by_label = {
+            f"{result.get('symbol')} | {result.get('country', 'norway')} | {result.get('name', '')}": result
+            for result in results if result.get("symbol")
+        }
+        selected_label = st.selectbox("Stock", sorted(result_by_label.keys()))
+        result = result_by_label[selected_label]
+        selected_symbol = str(result.get("symbol"))
         if result.get("error"):
             st.error(result["error"])
         else:
             scorecard = result.get("scorecard", {})
             technical = result.get("technical", {})
             fundamentals = result.get("fundamentals", {})
-            top_a, top_b, top_c, top_d, top_e = st.columns(5)
-            top_a.metric("Latest close", format_decimal(scorecard.get("latest_close")))
-            top_b.metric("Score", format_decimal(scorecard.get("score")))
-            top_c.metric("Volatility", format_decimal(scorecard.get("volatility")))
-            top_d.metric("Price change", format_percent(scorecard.get("price_change")))
-            top_e.metric("Last run", format_timestamp(result.get("last_run_at")) or "n/a")
-
-            data = result.get("data")
-            if isinstance(data, pd.DataFrame) and not data.empty:
-                chart_data = data.sort_values("date")[["date", "close", "ma20", "ma50", "ma200"]]
-                st.line_chart(chart_data.set_index("date"), width="stretch")
-
-            detail_left, detail_right = st.columns(2)
-            detail_left.dataframe(
-                detail_frame(technical),
-                width="stretch",
-                hide_index=True,
+            country = str(result.get("country") or "norway").lower()
+            refresh_left, refresh_right = st.columns([1, 4])
+            if refresh_left.button("Refresh selected stock", key="refresh_stock_intelligence"):
+                with st.spinner("Fetching news and provider financial statements"):
+                    refresh_result = pipeline_refresh_stock_intelligence(
+                        selected_symbol,
+                        country,
+                        yahoo_symbol=str(result.get("yahoo_symbol") or ""),
+                        settings=PipelineSettings.from_env(),
+                    )
+                    pipeline_build_medallion(
+                        PipelineSettings.from_env(),
+                        select=["+fact_stock_news", "+fact_fundamental_trend"],
+                    )
+                    load_stock_news.clear()
+                    load_statement_trends.clear()
+                if refresh_result["errors"]:
+                    st.warning("; ".join(refresh_result["errors"]))
+                st.success(
+                    f"Added {refresh_result['news_rows']} news and "
+                    f"{refresh_result['statement_rows']} statement rows."
+                )
+            refresh_right.caption(
+                "The view reads cached Gold data. Refresh fetches only this stock, "
+                "then rebuilds the dependent medallion models."
             )
-            detail_right.dataframe(
-                detail_frame(fundamentals),
-                width="stretch",
-                hide_index=True,
+
+            overview_view, news_view, quarterly_view, annual_view = st.tabs(
+                ["Overview", "Latest news", "Quarterly fundamentals", "Annual fundamentals"]
             )
+            with overview_view:
+                top_a, top_b, top_c, top_d, top_e = st.columns(5)
+                top_a.metric("Latest close", format_decimal(scorecard.get("latest_close")))
+                top_b.metric("Score", format_decimal(scorecard.get("score")))
+                top_c.metric("Volatility", format_percent(scorecard.get("volatility")))
+                top_d.metric("Price change", format_percent(scorecard.get("price_change")))
+                top_e.metric("Last run", format_timestamp(result.get("last_run_at")) or "n/a")
+
+                data = result.get("data")
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    chart_data = data.sort_values("date")[["date", "close", "ma20", "ma50", "ma200"]]
+                    st.line_chart(chart_data.set_index("date"), width="stretch")
+
+                detail_left, detail_right = st.columns(2)
+                detail_left.dataframe(
+                    detail_frame(technical), width="stretch", hide_index=True
+                )
+                detail_right.dataframe(
+                    detail_frame(fundamentals), width="stretch", hide_index=True
+                )
+
+            with news_view:
+                news = load_stock_news(selected_symbol, country)
+                if news.empty:
+                    st.info("No cached news is available. Use Refresh selected stock.")
+                else:
+                    for article in news.itertuples(index=False):
+                        title = str(article.title or "Untitled article")
+                        url = str(article.url or "")
+                        st.markdown(f"#### [{title}]({url})" if url else f"#### {title}")
+                        st.caption(
+                            " | ".join(
+                                value for value in [
+                                    str(article.publisher or ""),
+                                    format_timestamp(article.published_at),
+                                    str(article.provider or ""),
+                                ] if value
+                            )
+                        )
+                        if article.summary:
+                            st.write(str(article.summary))
+                        st.divider()
+
+            with quarterly_view:
+                render_statement_history(
+                    load_statement_trends(
+                        selected_symbol,
+                        country,
+                        "quarterly",
+                    ),
+                    "Quarterly",
+                )
+
+            with annual_view:
+                render_statement_history(
+                    load_statement_trends(
+                        selected_symbol,
+                        country,
+                        "annual",
+                    ),
+                    "Annual",
+                )
 
 with tab_analysis:
     load_saved = st.button("Load Saved Analysis", disabled=active_rows.empty)
@@ -919,7 +1261,7 @@ with tab_analysis:
         filtered_results = filter_results_by_frame(results, filtered_frame)
         st.session_state["filtered_analysis_results"] = filtered_results
 
-        st.dataframe(round_numeric_frame(filtered_frame), width="stretch", hide_index=True)
+        st.dataframe(style_numeric_frame(filtered_frame), width="stretch", hide_index=True)
 
         if filtered_frame.empty or not filtered_results:
             st.warning("No analyzed stocks match the selected filters.")
@@ -938,7 +1280,7 @@ with tab_analysis:
                 width="stretch",
             )
 
-            if st.button("Save Analysis To DuckDB"):
+            if st.button("Save Analysis To PostgreSQL"):
                 saved_history, saved_snapshots = store_analysis_results(
                     filtered_results,
                     fallback_source=data_source,
@@ -1064,7 +1406,7 @@ with tab_rankings:
                 "industry",
             ]
             available_columns = [column for column in ranking_columns if column in rankings.columns]
-            st.dataframe(round_numeric_frame(rankings[available_columns]), width="stretch", hide_index=True)
+            st.dataframe(style_numeric_frame(rankings[available_columns]), width="stretch", hide_index=True)
 
             chart = px.bar(
                 rankings.sort_values("ranking_score", ascending=False).head(40),

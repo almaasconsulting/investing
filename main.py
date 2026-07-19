@@ -7,7 +7,7 @@ from investing.core.ranking import build_sector_fundamental_score
 from investing.core.watchlist import analyze_watchlist, read_watchlist
 from investing.data_fetch.investing_com import search_stocks
 from investing.data_fetch.stock_universe import fetch_stock_universe
-from investing.db.duckdb_store import (
+from investing.db.store import (
     init_db,
     query_stock_universe,
     save_fundamental_snapshot,
@@ -18,7 +18,7 @@ from investing.db.duckdb_store import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch, analyze, and store stock data using Investing.com and DuckDB."
+        description="Fetch, analyze, and store stock data using Investing.com and PostgreSQL."
     )
     parser.add_argument(
         "--symbols",
@@ -57,17 +57,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refresh-universe",
         action="store_true",
-        help="Fetch and replace stock universe rows in DuckDB for the selected countries.",
+        help="Fetch and replace stock universe rows in PostgreSQL for the selected countries.",
     )
     parser.add_argument(
         "--list-universe",
         action="store_true",
-        help="List stocks from the DuckDB stock universe table.",
+        help="List stocks from the PostgreSQL stock universe table.",
     )
     parser.add_argument(
         "--from-universe",
         action="store_true",
-        help="Analyze stocks selected from the DuckDB stock universe table.",
+        help="Analyze stocks selected from the PostgreSQL stock universe table.",
     )
     parser.add_argument(
         "--universe-source",
@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save",
         action="store_true",
-        help="Save historical data to DuckDB",
+        help="Save historical data to PostgreSQL",
     )
     return parser.parse_args()
 
@@ -310,7 +310,7 @@ def main() -> None:
                     result.get("data_source", args.data_source),
                 ),
             )
-            print(" Saved historical and fundamental data to DuckDB")
+            print(" Saved historical and fundamental data to PostgreSQL")
 
 
 if __name__ == "__main__":

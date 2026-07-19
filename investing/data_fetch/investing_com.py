@@ -6,16 +6,17 @@ from typing import Any, Optional
 import pandas as pd
 import yfinance as yf
 
+from investing.data_fetch.investpy_compat import load_investpy
+
 
 def _load_investpy() -> Any:
     try:
-        import investpy
+        return load_investpy()
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "Investing.com support requires investpy and setuptools. "
             "Run: python -m pip install -r requirements.txt"
         ) from exc
-    return investpy
 
 
 def find_stock(symbol: str, country: str = "norway") -> Optional[Any]:
@@ -46,15 +47,18 @@ def search_stocks(query: str, country: str = "norway", n_results: int = 20) -> l
 def resolve_yahoo_symbol(symbol: str, country: str = "norway") -> str:
     mapping = {
         "norway": ".OL",
+        "canada": ".TO",
         "sweden": ".ST",
         "denmark": ".CO",
         "finland": ".HE",
+        "switzerland": ".SW",
         "netherlands": ".AS",
         "spain": ".MC",
         "italy": ".MI",
         "germany": ".DE",
         "france": ".PA",
         "uk": ".L",
+        "united kingdom": ".L",
     }
     symbol = symbol.strip()
     if "." in symbol:
@@ -80,7 +84,10 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     if "date" not in df.columns:
         df["date"] = pd.to_datetime(df.index)
 
-    df["date"] = pd.to_datetime(df["date"])
+    dates = pd.to_datetime(df["date"], errors="coerce")
+    if getattr(dates.dt, "tz", None) is not None:
+        dates = dates.dt.tz_localize(None)
+    df["date"] = dates
     df = df.rename(columns={
         "Open": "open",
         "High": "high",

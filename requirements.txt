@@ -1,13 +1,12 @@
-duckdb
 pandas
 investpy
-yfinance
+yfinance>=1.4.0
 streamlit
 plotly
-setuptools
 dagster
 dagster-webserver
 dagster-dbt
 dbt-core
-dbt-duckdb
-filelock
+dbt-postgres
+psycopg[binary]
+mkdocs

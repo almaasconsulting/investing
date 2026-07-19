@@ -1,0 +1,6 @@
+load_from:
+  - python_module:
+      module_name: investing.orchestration.definitions
+      attribute: defs
+      working_directory: .
+      location_name: investing_medallion

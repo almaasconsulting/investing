@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: dim_stock
+    description: Conformed stock dimension at one row per country and symbol.
+    columns:
+      - name: stock_key
+        tests: [not_null, unique]
+  - name: dim_sector
+    columns:
+      - name: sector_key
+        tests: [not_null, unique]
+  - name: dim_date
+    columns:
+      - name: date_key
+        tests: [not_null, unique]
+  - name: fact_stock_price_daily
+    columns:
+      - name: stock_key
+        tests: [not_null]
+      - name: date_key
+        tests: [not_null]
+  - name: fact_fundamental_snapshot
+    columns:
+      - name: stock_key
+        tests: [not_null]
+  - name: fact_analysis_snapshot
+    columns:
+      - name: stock_key
+        tests: [not_null]
+  - name: silver_news_article
+    columns:
+      - name: article_id
+        tests: [not_null]
+  - name: silver_financial_statement
+    columns:
+      - name: record_hash
+        tests: [not_null]
+  - name: fact_stock_news
+    columns:
+      - name: article_id
+        tests: [not_null]
+  - name: fact_financial_statement
+    columns:
+      - name: stock_key
+        tests: [not_null]
+      - name: selected_source
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['yahoo', 'investing']
+  - name: fact_fundamental_trend
+    columns:
+      - name: stock_key
+        tests: [not_null]
+      - name: fiscal_period_end
+        tests: [not_null]
+  - name: dim_news_article
+    columns:
+      - name: article_key
+        tests: [not_null, unique]
+  - name: bridge_stock_news
+    columns:
+      - name: stock_key
+        tests: [not_null]
+      - name: article_key
+        tests: [not_null]

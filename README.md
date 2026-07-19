@@ -1,12 +1,30 @@
 # Investing Analysis Project
 
-Initial modular Python setup to fetch stock data from Investing.com, store it in DuckDB, and run simple analysis.
+A Dagster-orchestrated, dbt-transformed stock analysis platform using a PostgreSQL Bronze/Silver/Gold medallion architecture and a Streamlit UI.
+
+PostgreSQL connection parameters can be configured through the installer or environment variables; see the
+[storage-computer setup guide](docs/storage-computer-setup.md#configuration).
+
+## Storage computer quick start
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_storage_computer.ps1 `
+  -DataRoot C:\repo\InvestingData `
+  -InstallPostgreSQL
+.\scripts\start_dagster.ps1
+```
+
+Open Dagster at `http://localhost:3000`. Start the app separately with `scripts\start_streamlit.ps1`. See [the full setup guide](docs/storage-computer-setup.md), [architecture](docs/architecture.md), and [operations guide](docs/operations.md).
+
+By default, Dagster refreshes the universe daily, processes up to 200 of the globally oldest stocks from one of 50 stable partitions every 15 minutes, and publishes Bronze/Silver/Gold with dbt hourly. Failed stocks rotate to the back of the queue and are retried on later passes.
+
+Markdown under `docs/` is the documentation source. MkDocs builds the HTML edition into `site/`, and `.github/workflows/documentation.yml` republishes it to GitHub Pages whenever documentation changes are pushed to `main`.
 
 ## Structure
 
 - `investing/data_fetch/investing_com.py` - fetches stock data from Investing.com via `investpy` and Yahoo Finance via `yfinance`
 - `investing/data_fetch/stock_universe.py` - fetches country stock universes, with Euronext Oslo as the preferred Norway source
-- `investing/db/duckdb_store.py` - stores and queries historical stock data in DuckDB
+- `investing/db/store.py` - PostgreSQL storage facade
 - `investing/core/clustering.py` - builds return correlations and simple correlation clusters
 - `investing/core/stock_analyzer.py` - calculates simple metrics and scores
 - `main.py` - example entrypoint for running a single stock fetch and analysis
@@ -50,8 +68,10 @@ From the UI you can also:
 - add a manual symbol to `watchlist.csv`
 - edit and save the watchlist table
 - run analysis from the saved watchlist
-- automatically save selected-stock analysis snapshots to DuckDB and reload the latest saved analysis after app restart
+- automatically save selected-stock analysis snapshots and reload the latest saved analysis after app restart
 - inspect a selected analyzed stock with price, moving averages, technical fields, and fundamentals
+- inspect cached stock news and refresh news for one selected stock
+- compare quarterly and annual statements with period and year-over-year changes
 - search the selectable universe by ticker, Yahoo ticker, company name, or ISIN
 - select stocks directly or select saved sectors to analyze whole sector groups
 - filter analyzed stocks by technical and fundamental criteria such as direction, score, volatility, RSI, P/E, dividend yield, growth, ROE, debt/equity, and Altman Z-score
@@ -64,9 +84,9 @@ From the UI you can also:
 
 ## Notes
 
-- This scaffold is designed to support any country or exchange, with Norway as the first example.
+- The installed catalog covers the US, Canada, Norway, and ten major European exchange centres; additional countries can use the same universe schema.
 - Use `investpy` to search and fetch stock data by symbol/name.
-- DuckDB will store historical records in `data/investing.duckdb`.
+- PostgreSQL stores all production and application records.
 - The database now stores:
   - 5-year share price history
   - daily technical indicator values such as MA20, MA50, MA200, RSI14, direction, and signal summary
@@ -141,11 +161,13 @@ Force Yahoo Finance for price history and fundamentals:
 python main.py --symbols EQNR,ORK --country norway --data-source yahoo --days 180 --save
 ```
 
-The CLI can analyze multiple symbols at once and optionally save the results to DuckDB.
+The CLI can analyze multiple symbols at once and optionally save the results to PostgreSQL.
 
 ## Stock Universe
 
-Refresh the Norwegian stock universe into DuckDB:
+The default catalog includes the United States, Canada, Norway, and ten major European exchange centres: London, Paris, Frankfurt/Xetra, Zurich, Stockholm, Amsterdam, Milan, Madrid, Copenhagen, and Helsinki. Dagster continuously loops through the configured universe in retryable batches, selecting never-run stocks first and then the oldest previous attempts. It reports live percentage and ETA progress for each batch.
+
+Refresh the Norwegian stock universe into PostgreSQL:
 
 ```powershell
 python main.py --refresh-universe --country norway
@@ -153,7 +175,7 @@ python main.py --refresh-universe --country norway
 
 Norway refreshes use Euronext's Oslo product directory by default, covering Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo. If the live source is unavailable, `--universe-source auto` falls back to `investpy`'s packaged stock list.
 
-List all Norwegian rows now stored in DuckDB:
+List all Norwegian rows now stored in PostgreSQL:
 
 ```powershell
 python main.py --list-universe --country norway

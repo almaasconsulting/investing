@@ -8,15 +8,20 @@ from .data_fetch.investing_com import (
     search_stocks,
 )
 from .data_fetch.stock_universe import fetch_stock_universe
-from .db.duckdb_store import (
+from .data_fetch.market_intelligence import fetch_financial_statements, fetch_stock_news
+from .db.store import (
     init_db,
+    query_financial_statement_trends,
     query_fundamental_snapshots,
     query_latest_analysis_snapshots,
     query_stock_history,
+    query_stock_news,
     query_stock_universe,
     query_stock_universe_symbols,
     save_analysis_snapshots,
     save_fundamental_snapshot,
+    save_financial_statements,
+    save_news_articles,
     save_stock_history,
     save_stock_universe,
 )
@@ -49,12 +54,18 @@ __all__ = [
     "resolve_yahoo_symbol",
     "search_stocks",
     "fetch_stock_universe",
+    "fetch_financial_statements",
+    "fetch_stock_news",
     "init_db",
     "save_stock_history",
     "save_fundamental_snapshot",
+    "save_financial_statements",
+    "save_news_articles",
     "save_analysis_snapshots",
     "save_stock_universe",
     "query_stock_history",
+    "query_stock_news",
+    "query_financial_statement_trends",
     "query_fundamental_snapshots",
     "query_latest_analysis_snapshots",
     "query_stock_universe",

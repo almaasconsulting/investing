@@ -1,10 +1,12 @@
 version: 2
 
 sources:
-  - name: raw
-    schema: main
+  - name: landing
+    schema: "{{ env_var('INVESTING_POSTGRES_SCHEMA', 'main') }}"
     tables:
       - name: stock_universe
       - name: stock_history
       - name: fundamental_snapshot
       - name: analysis_snapshot
+      - name: news_article_landing
+      - name: financial_statement_landing

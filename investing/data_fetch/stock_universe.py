@@ -7,6 +7,10 @@ from urllib.request import Request, urlopen
 
 import pandas as pd
 
+from investing.data_fetch.investpy_compat import load_investpy
+import yfinance as yf
+from yfinance import EquityQuery
+
 from investing.data_fetch.investing_com import resolve_yahoo_symbol
 
 EURONEXT_OSLO_DOWNLOAD_URL = (
@@ -18,6 +22,72 @@ OSLO_MARKET_MIC_BY_NAME = {
     "Oslo B\u00f8rs": "XOSL",
     "Euronext Growth Oslo": "MERK",
     "Euronext Expand Oslo": "XOAS",
+}
+
+# The broad catalog intentionally uses one provider country per major market.
+# Norway remains an additional home market and is not counted among the ten
+# European exchanges below.
+DEFAULT_MARKET_COUNTRIES = (
+    "norway",
+    "united states",
+    "canada",
+    "united kingdom",
+    "france",
+    "germany",
+    "switzerland",
+    "sweden",
+    "netherlands",
+    "italy",
+    "spain",
+    "denmark",
+    "finland",
+)
+
+PRIMARY_MARKET_BY_COUNTRY = {
+    "norway": ("Oslo Bors", "XOSL"),
+    "united states": ("NYSE / Nasdaq", ""),
+    "canada": ("Toronto Stock Exchange", "XTSE"),
+    "united kingdom": ("London Stock Exchange", "XLON"),
+    "france": ("Euronext Paris", "XPAR"),
+    "germany": ("Deutsche Borse Xetra", "XETR"),
+    "switzerland": ("SIX Swiss Exchange", "XSWX"),
+    "sweden": ("Nasdaq Stockholm", "XSTO"),
+    "netherlands": ("Euronext Amsterdam", "XAMS"),
+    "italy": ("Borsa Italiana", "XMIL"),
+    "spain": ("Bolsa de Madrid", "XMAD"),
+    "denmark": ("Nasdaq Copenhagen", "XCSE"),
+    "finland": ("Nasdaq Helsinki", "XHEL"),
+}
+
+YAHOO_EXCHANGES_BY_COUNTRY = {
+    "norway": ("Oslo Exchange", ("OSL",)),
+    "united states": ("US major exchanges", ("NYQ", "NMS", "NCM", "NGM", "ASE")),
+    "canada": ("Toronto Stock Exchange", ("TOR",)),
+    "united kingdom": ("London Stock Exchange", ("LSE",)),
+    "france": ("Euronext Paris", ("PAR",)),
+    "germany": ("Deutsche Borse Xetra", ("GER",)),
+    "switzerland": ("SIX Swiss Exchange", ("EBS",)),
+    "sweden": ("Nasdaq Stockholm", ("STO",)),
+    "netherlands": ("Euronext Amsterdam", ("AMS",)),
+    "italy": ("Borsa Italiana", ("MIL",)),
+    "spain": ("Bolsa de Madrid", ("MAD",)),
+    "denmark": ("Nasdaq Copenhagen", ("CPH",)),
+    "finland": ("Nasdaq Helsinki", ("HEL",)),
+}
+
+YAHOO_TO_MIC = {
+    "NYQ": "XNYS", "NMS": "XNAS", "NCM": "XNAS", "NGM": "XNAS", "ASE": "XASE",
+    "TOR": "XTSE", "LSE": "XLON", "PAR": "XPAR", "GER": "XETR", "EBS": "XSWX",
+    "STO": "XSTO", "AMS": "XAMS", "MIL": "XMIL", "MAD": "XMAD", "CPH": "XCSE",
+    "HEL": "XHEL", "OSL": "XOSL",
+}
+
+COUNTRY_ALIASES = {
+    "usa": "united states",
+    "us": "united states",
+    "united states of america": "united states",
+    "uk": "united kingdom",
+    "great britain": "united kingdom",
 }
 
 STOCK_UNIVERSE_COLUMNS = [
@@ -121,9 +191,9 @@ def fetch_euronext_oslo_stock_universe(url: str = EURONEXT_OSLO_DOWNLOAD_URL) ->
 
 def fetch_investpy_stock_universe(country: str) -> pd.DataFrame:
     """Fetch stock metadata from investpy's packaged stocks.csv fallback."""
-    import investpy
+    investpy = load_investpy()
 
-    country = country.strip().lower()
+    country = COUNTRY_ALIASES.get(country.strip().lower(), country.strip().lower())
     raw = investpy.get_stocks(country=country)
     if raw.empty:
         return _empty_universe()
@@ -134,6 +204,7 @@ def fetch_investpy_stock_universe(country: str) -> pd.DataFrame:
     name = _column(raw, "name")
     full_name = _column(raw, "full_name")
     full_name = full_name.mask(full_name == "", name)
+    primary_market, primary_mic = PRIMARY_MARKET_BY_COUNTRY.get(country, ("", ""))
     universe = pd.DataFrame(
         {
             "symbol": symbol,
@@ -144,9 +215,9 @@ def fetch_investpy_stock_universe(country: str) -> pd.DataFrame:
             "name": name,
             "full_name": full_name,
             "country": country_values,
-            "market": "",
-            "exchange": "",
-            "exchange_mic": "",
+            "market": primary_market,
+            "exchange": primary_market,
+            "exchange_mic": primary_mic,
             "isin": _column(raw, "isin"),
             "currency": _column(raw, "currency").str.upper(),
             "source": "investpy",
@@ -158,13 +229,79 @@ def fetch_investpy_stock_universe(country: str) -> pd.DataFrame:
     return universe[universe["symbol"] != ""].reset_index(drop=True)
 
 
+def _base_yahoo_symbol(symbol: str, country: str) -> str:
+    suffixes = {
+        "norway": (".OL",),
+        "canada": (".TO",), "united kingdom": (".L",), "france": (".PA",),
+        "germany": (".DE",), "switzerland": (".SW",), "sweden": (".ST",),
+        "netherlands": (".AS",), "italy": (".MI",), "spain": (".MC",),
+        "denmark": (".CO",), "finland": (".HE",),
+    }
+    for suffix in suffixes.get(country, ()):
+        if symbol.upper().endswith(suffix):
+            return symbol[:-len(suffix)]
+    return symbol
+
+
+def fetch_yahoo_exchange_stock_universe(country: str, page_size: int = 250) -> pd.DataFrame:
+    """Fetch equities belonging to the configured exchange codes."""
+    country = COUNTRY_ALIASES.get(country.strip().lower(), country.strip().lower())
+    market, exchange_codes = YAHOO_EXCHANGES_BY_COUNTRY[country]
+    query = EquityQuery("is-in", ["exchange", *exchange_codes])
+    quotes: list[dict] = []
+    offset = 0
+    while True:
+        response = yf.screen(query, offset=offset, size=page_size, sortField="ticker", sortAsc=True)
+        page = response.get("quotes", [])
+        if not page:
+            break
+        quotes.extend(page)
+        offset += len(page)
+        if len(page) < page_size or offset >= int(response.get("total", offset) or offset):
+            break
+
+    refreshed_at = _utc_now()
+    rows: list[dict] = []
+    for quote in quotes:
+        if str(quote.get("quoteType", "EQUITY")).upper() != "EQUITY":
+            continue
+        yahoo_symbol = str(quote.get("symbol", "") or "").strip().upper()
+        if not yahoo_symbol:
+            continue
+        exchange_code = str(quote.get("exchange", "") or "").upper()
+        name = str(quote.get("shortName") or quote.get("longName") or yahoo_symbol)
+        rows.append({
+            "symbol": _base_yahoo_symbol(yahoo_symbol, country).upper(),
+            "yahoo_symbol": yahoo_symbol,
+            "name": name,
+            "full_name": str(quote.get("longName") or name),
+            "country": country,
+            "market": market,
+            "exchange": str(quote.get("fullExchangeName") or exchange_code),
+            "exchange_mic": YAHOO_TO_MIC.get(exchange_code, exchange_code),
+            "isin": "",
+            "currency": str(quote.get("currency", "") or "").upper(),
+            "source": "yahoo_screener",
+            "source_url": "https://finance.yahoo.com/research-hub/screener/equity/",
+            "is_active": True,
+            "refreshed_at": refreshed_at,
+        })
+    return pd.DataFrame(rows, columns=STOCK_UNIVERSE_COLUMNS).drop_duplicates(
+        ["country", "yahoo_symbol"], keep="last"
+    ) if rows else _empty_universe()
+
+
 def _normalize_countries(countries: Iterable[str] | str | None) -> list[str]:
     if countries is None:
-        return ["norway"]
+        return list(DEFAULT_MARKET_COUNTRIES)
     if isinstance(countries, str):
         countries = countries.split(",")
-    values = [country.strip().lower() for country in countries if country and country.strip()]
-    return values or ["norway"]
+    values = [
+        COUNTRY_ALIASES.get(country.strip().lower(), country.strip().lower())
+        for country in countries
+        if country and country.strip()
+    ]
+    return list(dict.fromkeys(values)) or list(DEFAULT_MARKET_COUNTRIES)
 
 
 def fetch_stock_universe(
@@ -191,8 +328,12 @@ def fetch_stock_universe(
             frames.append(fetch_investpy_stock_universe(country))
             continue
 
+        if source == "yahoo":
+            frames.append(fetch_yahoo_exchange_stock_universe(country))
+            continue
+
         if source != "auto":
-            raise ValueError("Universe source must be one of: auto, euronext, investpy.")
+            raise ValueError("Universe source must be one of: auto, euronext, yahoo, investpy.")
 
         if country == "norway":
             try:
@@ -200,7 +341,10 @@ def fetch_stock_universe(
             except Exception:
                 frames.append(fetch_investpy_stock_universe(country))
         else:
-            frames.append(fetch_investpy_stock_universe(country))
+            try:
+                frames.append(fetch_yahoo_exchange_stock_universe(country))
+            except Exception:
+                frames.append(fetch_investpy_stock_universe(country))
 
     frames = [frame for frame in frames if not frame.empty]
     if not frames:

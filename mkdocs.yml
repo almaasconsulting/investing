@@ -1,0 +1,14 @@
+site_name: Investing Medallion Platform
+site_description: Dagster, dbt, PostgreSQL, and Streamlit operating documentation
+docs_dir: docs
+site_dir: site
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Storage computer setup: storage-computer-setup.md
+  - PostgreSQL: postgresql.md
+  - Operations: operations.md
+  - Data model: data-model.md
+  - Troubleshooting: troubleshooting.md
