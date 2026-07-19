@@ -119,7 +119,7 @@ if ($ResetPostgreSQL) {
     }
 
     $Psql = $null
-    foreach ($Version in @("18", "17")) {
+    foreach ($Version in @("18", "17", "16", "15", "14", "13", "12")) {
         $Candidate = "C:\Program Files\PostgreSQL\$Version\bin\psql.exe"
         if (Test-Path -LiteralPath $Candidate) {
             $Psql = $Candidate

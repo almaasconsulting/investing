@@ -25,9 +25,10 @@ OSLO_MARKET_MIC_BY_NAME = {
     "Euronext Expand Oslo": "XOAS",
 }
 
-# The broad catalog intentionally uses one provider country per major market.
-# Norway remains an additional home market and is not counted among the ten
-# European exchanges below.
+# These countries define the supported curated universe. The public entry point
+# at the bottom of this module now loads flagship-index membership (plus the
+# configured US/Canadian REIT and dividend collections). The older provider
+# helpers remain available only for compatibility and focused diagnostics.
 DEFAULT_MARKET_COUNTRIES = (
     "norway",
     "united states",
@@ -328,4 +329,6 @@ def fetch_stock_universe(
         raise RuntimeError(
             "Curated universe refresh returned no constituents for: " + ", ".join(missing)
         )
-    return universe[STOCK_UNIVERSE_COLUMNS]
+    result = universe[STOCK_UNIVERSE_COLUMNS].copy()
+    result.attrs.update(universe.attrs)
+    return result

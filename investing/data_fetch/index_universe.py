@@ -341,16 +341,28 @@ def fetch_reit_universe(country: str) -> pd.DataFrame:
 
 def fetch_curated_index_universe(countries: Iterable[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
     for country in countries:
         country_frames = [fetch_flagship_index_universe(country)]
         if country in {"united states", "canada"}:
-            country_frames.append(fetch_reit_universe(country))
-            country_frames.append(fetch_dividend_aristocrats(country))
+            for label, fetcher in (
+                ("REIT", fetch_reit_universe),
+                ("dividend aristocrat", fetch_dividend_aristocrats),
+            ):
+                try:
+                    extra = fetcher(country)
+                    if not extra.empty:
+                        country_frames.append(extra)
+                except Exception as exc:
+                    warnings.append(f"{country} {label} enrichment skipped: {exc}")
         country_frame = pd.concat(country_frames, ignore_index=True)
         country_frame = country_frame.drop_duplicates(
             ["country", "yahoo_symbol"], keep="first"
         )
         frames.append(country_frame)
     if not frames:
-        return pd.DataFrame(columns=STOCK_UNIVERSE_COLUMNS)
-    return pd.concat(frames, ignore_index=True)[STOCK_UNIVERSE_COLUMNS]
+        result = pd.DataFrame(columns=STOCK_UNIVERSE_COLUMNS)
+    else:
+        result = pd.concat(frames, ignore_index=True)[STOCK_UNIVERSE_COLUMNS]
+    result.attrs["warnings"] = warnings
+    return result

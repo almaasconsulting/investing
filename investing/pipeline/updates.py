@@ -237,7 +237,11 @@ def refresh_stock_universe(settings: PipelineSettings | None = None) -> dict[str
             replace_countries=settings.countries,
             db_path=settings.database_path,
         )
-    return {"rows": rows, "countries": list(settings.countries)}
+    return {
+        "rows": rows,
+        "countries": list(settings.countries),
+        "warnings": list(universe.attrs.get("warnings", [])),
+    }
 
 
 def _batch_metadata(universe: pd.DataFrame, batch_key: str | None) -> dict[str, Any]:

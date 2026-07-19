@@ -83,10 +83,23 @@ Set-Location C:\repo\investing
 
 The command reuses the PostgreSQL login from `.runtime-env.ps1` (or prompts for its password), drops and recreates the `main`, `bronze`, `silver`, and `gold` schemas, deletes the data directory, `.venv`, and `.runtime-env.ps1`, and leaves the PostgreSQL server, login, database, and source repository intact. Omit `-ResetPostgreSQL` only when PostgreSQL is not installed. This is the recommended reset when replacing the former exchange-wide universe with the curated index universe.
 
-4. Run the automatic PostgreSQL installation command above.
+4. Reinstall the application against the existing PostgreSQL server:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_storage_computer.ps1 `
+  -DataRoot C:\repo\InvestingData `
+  -PostgresHost localhost `
+  -PostgresPort 5432 `
+  -PostgresDatabase investing `
+  -PostgresUser investing
+```
+
+The installer prompts for the PostgreSQL application password. Do not add
+`-InstallPostgreSQL` when the server is already installed.
+
 5. Start Dagster and Streamlit as described below.
 6. Run `universe_refresh_job`, one `stock_batch_refresh_job` partition, and `medallion_refresh_job`.
-7. Verify Stock View, news, fundamentals, and Rankings. Keep the timestamped backup until several scheduled runs succeed.
+7. Verify Stock View, news, fundamentals, and Rankings.
 
 ## First start
 

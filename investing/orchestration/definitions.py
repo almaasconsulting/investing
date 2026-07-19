@@ -137,6 +137,8 @@ def bronze_stock_universe(context) -> dg.MaterializeResult:
     """Refresh flagship indexes, US/Canadian REITs, and dividend aristocrats."""
     result = refresh_stock_universe(PipelineSettings.from_env())
     context.log.info("Refreshed %s universe rows", result["rows"])
+    for warning in result.get("warnings", []):
+        context.log.warning(warning)
     return dg.MaterializeResult(metadata=result)
 
 

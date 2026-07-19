@@ -75,6 +75,82 @@ class IndexUniverseTests(unittest.TestCase):
         self.assertEqual(result["symbol"].tolist(), ["AAA", "BBB", "REIT", "DIV"])
         self.assertEqual(result.loc[result["symbol"] == "AAA", "market"].iloc[0], "S&P 500")
 
+    def test_optional_enrichment_failure_does_not_fail_flagship_universe(self) -> None:
+        flagship = pd.DataFrame(
+            [
+                {
+                    "symbol": "AAA",
+                    "yahoo_symbol": "AAA.TO",
+                    "name": "AAA",
+                    "full_name": "AAA",
+                    "country": "canada",
+                    "market": "S&P/TSX 60",
+                    "exchange": "Toronto Stock Exchange",
+                    "exchange_mic": "XTSE",
+                    "isin": "",
+                    "currency": "CAD",
+                    "source": "test",
+                    "source_url": "https://example.test",
+                    "is_active": True,
+                    "refreshed_at": pd.Timestamp("2026-07-20"),
+                }
+            ],
+            columns=STOCK_UNIVERSE_COLUMNS,
+        )
+        with (
+            patch(
+                "investing.data_fetch.index_universe.fetch_flagship_index_universe",
+                return_value=flagship,
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_reit_universe",
+                side_effect=RuntimeError("provider unavailable"),
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_dividend_aristocrats",
+                side_effect=RuntimeError("html parser unavailable"),
+            ),
+        ):
+            result = fetch_curated_index_universe(["canada"])
+
+        self.assertEqual(result["symbol"].tolist(), ["AAA"])
+        self.assertEqual(len(result.attrs["warnings"]), 2)
+        self.assertIn("canada dividend aristocrat enrichment skipped", result.attrs["warnings"][1])
+
+    def test_optional_enrichment_failure_does_not_abort_flagship_refresh(self) -> None:
+        flagship = pd.DataFrame(
+            [
+                {
+                    "symbol": "AAA", "yahoo_symbol": "AAA.TO", "name": "AAA",
+                    "full_name": "AAA", "country": "canada", "market": "S&P/TSX 60",
+                    "exchange": "Toronto Stock Exchange", "exchange_mic": "XTSE",
+                    "isin": "", "currency": "CAD", "source": "index_constituent",
+                    "source_url": "https://example.test", "is_active": True,
+                    "refreshed_at": pd.Timestamp("2026-07-20"),
+                }
+            ],
+            columns=STOCK_UNIVERSE_COLUMNS,
+        )
+        with (
+            patch(
+                "investing.data_fetch.index_universe.fetch_flagship_index_universe",
+                return_value=flagship,
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_reit_universe",
+                side_effect=RuntimeError("Yahoo unavailable"),
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_dividend_aristocrats",
+                side_effect=RuntimeError("HTML table unavailable"),
+            ),
+        ):
+            result = fetch_curated_index_universe(["canada"])
+
+        self.assertEqual(result["symbol"].tolist(), ["AAA"])
+        self.assertEqual(len(result.attrs["warnings"]), 2)
+        self.assertIn("dividend aristocrat enrichment skipped", result.attrs["warnings"][1])
+
 
 if __name__ == "__main__":
     unittest.main()

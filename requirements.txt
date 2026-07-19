@@ -1,4 +1,7 @@
 pandas
+html5lib
+lxml
+beautifulsoup4
 investpy
 yfinance>=1.4.0
 streamlit
