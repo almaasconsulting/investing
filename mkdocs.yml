@@ -8,6 +8,7 @@ nav:
   - Home: index.md
   - Architecture: architecture.md
   - Storage computer setup: storage-computer-setup.md
+  - Production clean reset: production-reset-runbook.md
   - PostgreSQL: postgresql.md
   - Operations: operations.md
   - Data model: data-model.md

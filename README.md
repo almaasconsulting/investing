@@ -23,7 +23,7 @@ Markdown under `docs/` is the documentation source. MkDocs builds the HTML editi
 ## Structure
 
 - `investing/data_fetch/investing_com.py` - fetches stock data from Investing.com via `investpy` and Yahoo Finance via `yfinance`
-- `investing/data_fetch/stock_universe.py` - fetches country stock universes, with Euronext Oslo as the preferred Norway source
+- `investing/data_fetch/index_universe.py` - refreshes flagship-index constituents plus US/Canadian REITs and dividend aristocrats
 - `investing/db/store.py` - PostgreSQL storage facade
 - `investing/core/clustering.py` - builds return correlations and simple correlation clusters
 - `investing/core/stock_analyzer.py` - calculates simple metrics and scores
@@ -84,7 +84,7 @@ From the UI you can also:
 
 ## Notes
 
-- The installed catalog covers the US, Canada, Norway, and ten major European exchange centres; additional countries can use the same universe schema.
+- The installed catalog is intentionally curated: S&P 500, S&P/TSX 60, and the flagship index for Norway and ten major European markets, plus US/Canadian REITs and dividend aristocrats.
 - Use `investpy` to search and fetch stock data by symbol/name.
 - PostgreSQL stores all production and application records.
 - The database now stores:
@@ -165,15 +165,15 @@ The CLI can analyze multiple symbols at once and optionally save the results to 
 
 ## Stock Universe
 
-The default catalog includes the United States, Canada, Norway, and ten major European exchange centres: London, Paris, Frankfurt/Xetra, Zurich, Stockholm, Amsterdam, Milan, Madrid, Copenhagen, and Helsinki. Dagster continuously loops through the configured universe in retryable batches, selecting never-run stocks first and then the oldest previous attempts. It reports live percentage and ETA progress for each batch.
+The default catalog includes S&P 500, S&P/TSX 60, OBX, FTSE 100, CAC 40, DAX 40, SMI, OMX Stockholm 30, AEX, FTSE MIB, IBEX 35, OMX Copenhagen 25, and OMX Helsinki 25. US and Canadian REITs and dividend aristocrats are added and deduplicated. Dagster refreshes membership daily and continuously processes the curated universe in retryable oldest-first batches.
 
-Refresh the Norwegian stock universe into PostgreSQL:
+Refresh configured index membership into PostgreSQL:
 
 ```powershell
-python main.py --refresh-universe --country norway
+python main.py --refresh-universe --country norway --universe-source index
 ```
 
-Norway refreshes use Euronext's Oslo product directory by default, covering Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo. If the live source is unavailable, `--universe-source auto` falls back to `investpy`'s packaged stock list.
+Norway refreshes use the OBX constituent list. A failed required constituent download aborts the refresh before existing membership is replaced.
 
 List all Norwegian rows now stored in PostgreSQL:
 

@@ -81,7 +81,7 @@ Set-Location C:\repo\investing
   -ConfirmReset
 ```
 
-The command reuses the PostgreSQL login from `.runtime-env.ps1` (or prompts for its password), drops and recreates the `main`, `bronze`, `silver`, and `gold` schemas, deletes the data directory, `.venv`, and `.runtime-env.ps1`, and leaves the PostgreSQL server, login, database, and source repository intact. Omit `-ResetPostgreSQL` only when PostgreSQL is not installed.
+The command reuses the PostgreSQL login from `.runtime-env.ps1` (or prompts for its password), drops and recreates the `main`, `bronze`, `silver`, and `gold` schemas, deletes the data directory, `.venv`, and `.runtime-env.ps1`, and leaves the PostgreSQL server, login, database, and source repository intact. Omit `-ResetPostgreSQL` only when PostgreSQL is not installed. This is the recommended reset when replacing the former exchange-wide universe with the curated index universe.
 
 4. Run the automatic PostgreSQL installation command above.
 5. Start Dagster and Streamlit as described below.
@@ -144,6 +144,7 @@ storage access, but the component variables are still used by dbt.
 | `INVESTING_POSTGRES_SCHEMA` | `main` | Landing schema created for Python ingestion and used as the dbt source schema. |
 | `DAGSTER_HOME` | under DataRoot | Dagster run history and schedule state. |
 | `INVESTING_COUNTRIES` | US, Canada, Norway and ten European markets | Comma-separated universe countries. |
+| `INVESTING_UNIVERSE_SOURCE` | `index` | Flagship national indexes plus US/Canadian REITs and dividend aristocrats. |
 | `INVESTING_ANALYSIS_SCOPE` | `universe` | Price/analysis scope: `universe` or `watchlist`. |
 | `INVESTING_CONTENT_SCOPE` | `universe` | News/statement scope: `universe` or `watchlist`. |
 | `INVESTING_BATCH_SIZE` | `200` | Maximum oldest stocks processed per asset and partition run. |

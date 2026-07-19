@@ -4,7 +4,7 @@
 
 Dagster uses three independent jobs:
 
-1. `universe_refresh_job` refreshes active securities daily.
+1. `universe_refresh_job` refreshes flagship-index membership daily and adds US/Canadian REITs and dividend aristocrats. A failed required source leaves the previous universe unchanged.
 2. `stock_batch_refresh_job` runs one deterministic stock partition every 15 minutes. Each asset takes up to `INVESTING_BATCH_SIZE` oldest stocks in that partition for prices/fundamentals and news/statements. Provider requests use four concurrent workers by default.
 3. `medallion_refresh_job` executes the native dbt assets hourly. Dagster displays every Bronze, Silver, and Gold model separately, including lineage and dbt tests as asset checks.
 
@@ -33,7 +33,9 @@ Runs are observable in the Dagster UI. A failed stock is recorded in the run sum
 
 Streamlit uses the same shared ingestion/persistence service. An update started in the app therefore follows identical provider-merging rules, while PostgreSQL safely supports concurrent reads and writes.
 
-Stock View reads cached Silver/Gold news and statement history. **Refresh selected stock** fetches only that stock and rebuilds the medallion models. Country and market selectors show checked selections instead of comma-separated text. The default catalog includes the US, Canada, Norway, and ten major European exchange centres. A continuous schedule loops through the full universe in retryable batches of 200 stocks.
+Stock View reads cached Silver/Gold news and statement history. **Refresh selected stock** fetches only that stock and rebuilds the medallion models. Country and market selectors show checked selections. The catalog contains each country's flagship index plus the US/Canadian REIT and dividend-aristocrat additions. A continuous schedule loops through this curated universe in retryable batches of 200 stocks.
+
+For a database-wide sector comparison, select the desired countries/markets, choose **Use all filtered stocks**, then click **Load Database Analysis**. Do not use **Run Analysis** for the entire database; live app analysis is capped at one batch. Build sector rankings from the saved Dagster results.
 
 Stocks never processed are selected first, followed by the least recently attempted stocks. An automated price/analysis run only selects a stock when its last successful update is at least 24 hours old. The scheduler chooses the partition containing the globally oldest eligible work; within it, price/analysis and content maintain separate oldest-first queues. Failed attempts receive a timestamp too, so a permanently bad ticker cannot starve the queue. Dagster logs live progress every ten stocks by default. Set `INVESTING_PROGRESS_EVERY=1` to log every stock.
 

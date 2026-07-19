@@ -31,6 +31,7 @@ The files in `docs/` are the Markdown documentation. `python -m mkdocs build` cr
 ## Important behavior
 
 - The default scope is every active stock in the configured country universe. Set `INVESTING_ANALYSIS_SCOPE=watchlist` for a smaller run.
+- The daily universe contains flagship-index constituents plus US/Canadian REITs and dividend aristocrats; exchange-wide listings are excluded.
 - Price ingestion is incremental. It requests only dates after the last stored date plus a configurable seven-day correction overlap.
 - Yahoo values win when both providers contain a field. Investing.com fills missing Yahoo values. Both raw provider values and provenance remain available.
 - dbt incrementally updates Bronze, Silver, and Gold. Use a full refresh only for recovery or incompatible schema changes.
