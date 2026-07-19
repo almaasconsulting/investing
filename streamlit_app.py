@@ -850,7 +850,8 @@ with st.sidebar:
         format_func=lambda country: country.title(),
         help="Checked countries are included in universe discovery and filtering.",
     )
-    universe_source = st.selectbox("Universe source", ["auto", "yahoo", "euronext", "investpy"], index=0)
+    universe_source = "index"
+    st.caption("Universe: flagship national indexes, plus US/Canadian REITs and dividend aristocrats.")
     data_source = st.selectbox("Market data", ["auto", "yahoo", "investing"], index=0)
     st.caption("Auto queries both providers, prefers Yahoo values, and fills gaps from Investing.com.")
     days = st.number_input("History days", min_value=30, max_value=3650, value=365, step=30)
@@ -1218,7 +1219,7 @@ with tab_stock_view:
                 )
 
 with tab_analysis:
-    load_saved = st.button("Load Saved Analysis", disabled=active_rows.empty)
+    load_saved = st.button("Load Database Analysis", disabled=active_rows.empty)
     if load_saved:
         cached_results = load_saved_analysis_for_rows(active_rows)
         if cached_results:
@@ -1232,7 +1233,18 @@ with tab_analysis:
         else:
             st.warning("No saved analysis found for the selected stocks.")
 
-    run_analysis = st.button("Run Analysis", type="primary", disabled=active_rows.empty)
+    interactive_limit = PipelineSettings.from_env().batch_size
+    too_many_for_live_analysis = len(active_rows) > interactive_limit
+    if too_many_for_live_analysis:
+        st.info(
+            f"Database-wide analysis uses saved Dagster results. Live Run Analysis is limited "
+            f"to {interactive_limit} stocks; the current selection contains {len(active_rows)}."
+        )
+    run_analysis = st.button(
+        "Run Analysis",
+        type="primary",
+        disabled=active_rows.empty or too_many_for_live_analysis,
+    )
     if run_analysis:
         with st.spinner("Fetching prices and fundamentals"):
             st.session_state["analysis_results"] = analyze_universe(
@@ -1324,7 +1336,7 @@ with tab_rankings:
         results = st.session_state.get("analysis_results", [])
 
     if not results:
-        st.info("Run analysis first, then build rankings.")
+        st.info("Load Database Analysis in the Analysis tab, then build rankings.")
     else:
         st.caption(
             "Fundamental scores use sector-specific indicator weights. Missing values score neutrally; "

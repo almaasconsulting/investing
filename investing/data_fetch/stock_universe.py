@@ -12,6 +12,7 @@ import yfinance as yf
 from yfinance import EquityQuery
 
 from investing.data_fetch.investing_com import resolve_yahoo_symbol
+from investing.data_fetch.index_universe import fetch_curated_index_universe
 
 EURONEXT_OSLO_DOWNLOAD_URL = (
     "https://live.euronext.com/product_directory/data/stocks-oslo/download"
@@ -306,47 +307,25 @@ def _normalize_countries(countries: Iterable[str] | str | None) -> list[str]:
 
 def fetch_stock_universe(
     countries: Iterable[str] | str | None = None,
-    source: str = "auto",
+    source: str = "index",
 ) -> pd.DataFrame:
     """
-    Fetch stock-universe metadata for one or more countries.
+    Fetch the curated flagship-index universe for one or more countries.
 
-    Norway uses Euronext's live Oslo product directory in auto mode. Other
-    countries use investpy's packaged stock list.
+    United States and Canada also include REITs and their dividend-aristocrat
+    collections. Exchange-wide discovery remains available only through the
+    lower-level diagnostic functions in this module.
     """
     source = source.strip().lower()
-    frames: list[pd.DataFrame] = []
-
-    for country in _normalize_countries(countries):
-        if source == "euronext":
-            if country != "norway":
-                raise ValueError("The Euronext source currently supports only Norway.")
-            frames.append(fetch_euronext_oslo_stock_universe())
-            continue
-
-        if source == "investpy":
-            frames.append(fetch_investpy_stock_universe(country))
-            continue
-
-        if source == "yahoo":
-            frames.append(fetch_yahoo_exchange_stock_universe(country))
-            continue
-
-        if source != "auto":
-            raise ValueError("Universe source must be one of: auto, euronext, yahoo, investpy.")
-
-        if country == "norway":
-            try:
-                frames.append(fetch_euronext_oslo_stock_universe())
-            except Exception:
-                frames.append(fetch_investpy_stock_universe(country))
-        else:
-            try:
-                frames.append(fetch_yahoo_exchange_stock_universe(country))
-            except Exception:
-                frames.append(fetch_investpy_stock_universe(country))
-
-    frames = [frame for frame in frames if not frame.empty]
-    if not frames:
-        return _empty_universe()
-    return pd.concat(frames, ignore_index=True)[STOCK_UNIVERSE_COLUMNS]
+    if source not in {"auto", "index"}:
+        raise ValueError(
+            "The application universe is index-only. Universe source must be 'index'."
+        )
+    normalized_countries = _normalize_countries(countries)
+    universe = fetch_curated_index_universe(normalized_countries)
+    missing = sorted(set(normalized_countries) - set(universe["country"].unique()))
+    if missing:
+        raise RuntimeError(
+            "Curated universe refresh returned no constituents for: " + ", ".join(missing)
+        )
+    return universe[STOCK_UNIVERSE_COLUMNS]

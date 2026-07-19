@@ -27,7 +27,7 @@ class PipelineSettings:
     postgres_sslmode: str = "prefer"
     postgres_schema: str = "main"
     countries: tuple[str, ...] = DEFAULT_MARKET_COUNTRIES
-    universe_source: str = "auto"
+    universe_source: str = "index"
     data_source: str = "auto"
     analysis_days: int = 1825
     analysis_scope: str = "universe"
@@ -65,7 +65,7 @@ class PipelineSettings:
             countries=_csv_env(
                 "INVESTING_COUNTRIES", ",".join(DEFAULT_MARKET_COUNTRIES)
             ),
-            universe_source=os.getenv("INVESTING_UNIVERSE_SOURCE", "auto").strip().lower(),
+            universe_source=os.getenv("INVESTING_UNIVERSE_SOURCE", "index").strip().lower(),
             data_source=os.getenv("INVESTING_DATA_SOURCE", "auto").strip().lower(),
             analysis_days=int(os.getenv("INVESTING_ANALYSIS_DAYS", "1825")),
             analysis_scope=os.getenv("INVESTING_ANALYSIS_SCOPE", "universe").strip().lower(),

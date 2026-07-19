@@ -71,9 +71,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--universe-source",
-        choices=["auto", "euronext", "investpy"],
-        default="auto",
-        help="Source used by --refresh-universe. Auto uses Euronext for Norway and investpy otherwise.",
+        choices=["index"],
+        default="index",
+        help="Refresh flagship-index constituents plus US/Canadian REITs and dividend aristocrats.",
     )
     parser.add_argument(
         "--data-source",

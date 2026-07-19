@@ -14,6 +14,7 @@ param(
     [string]$PostgresVersion = "18",
     [string]$PostgresAdminUser = "postgres",
     [string]$PostgresAdminPassword = "",
+    [switch]$ResetPostgreSQLData,
     [switch]$RegisterStartupTasks,
     [switch]$StartServices,
     [switch]$SkipTests
@@ -113,6 +114,7 @@ $env:INVESTING_POSTGRES_SCHEMA = $PostgresSchema
 $env:INVESTING_WATCHLIST_PATH = Join-Path $DataRoot "watchlist.csv"
 $env:INVESTING_ANALYSIS_SCOPE = "universe"
 $env:INVESTING_CONTENT_SCOPE = "universe"
+$env:INVESTING_UNIVERSE_SOURCE = "index"
 $env:INVESTING_BATCH_SIZE = "200"
 $env:INVESTING_BATCH_PARTITION_COUNT = "50"
 $env:INVESTING_FETCH_WORKERS = "4"
@@ -132,6 +134,7 @@ $env:INVESTING_POSTGRES_SSLMODE = '{7}'
 $env:INVESTING_POSTGRES_SCHEMA = '{8}'
 $env:INVESTING_ANALYSIS_SCOPE = 'universe'
 $env:INVESTING_CONTENT_SCOPE = 'universe'
+$env:INVESTING_UNIVERSE_SOURCE = 'index'
 $env:INVESTING_BATCH_SIZE = '200'
 $env:INVESTING_BATCH_PARTITION_COUNT = '50'
 $env:INVESTING_FETCH_WORKERS = '4'
@@ -186,6 +189,12 @@ Assert-NativeSuccess "pip bootstrap"
 Assert-NativeSuccess "dependency installation"
 & $Python -c "import psycopg; print('psycopg', psycopg.__version__)"
 Assert-NativeSuccess "psycopg validation"
+
+if ($ResetPostgreSQLData) {
+    Write-Warning "ResetPostgreSQLData is enabled. All application tables in the landing, bronze, silver, and gold schemas will be deleted."
+    & $Python (Join-Path $PSScriptRoot "reset_postgresql_data.py")
+    Assert-NativeSuccess "PostgreSQL application-data reset"
+}
 
 Write-Host "Initializing PostgreSQL storage ..."
 & $Python -c "from investing.db.store import init_db; con=init_db(); con.close(); print('Database initialized')"

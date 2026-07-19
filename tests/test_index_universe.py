@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+import pandas as pd
+
+from investing.data_fetch.index_universe import (
+    ConstituentSource,
+    STOCK_UNIVERSE_COLUMNS,
+    _index_rows,
+    fetch_curated_index_universe,
+)
+
+
+class IndexUniverseTests(unittest.TestCase):
+    def test_constituent_table_normalizes_canadian_class_ticker(self) -> None:
+        source = ConstituentSource("Test Index", "https://example.test/index", 2)
+        html = """
+        <table>
+          <tr><th>Company</th><th>Ticker</th></tr>
+          <tr><td>Example Inc</td><td>EX.A</td></tr>
+          <tr><td>Second Inc</td><td>SECOND</td></tr>
+        </table>
+        """
+        with patch(
+            "investing.data_fetch.index_universe._download_text", return_value=html
+        ):
+            result = _index_rows(source, "canada")
+
+        self.assertEqual(result["symbol"].tolist(), ["EX-A", "SECOND"])
+        self.assertEqual(result["yahoo_symbol"].tolist(), ["EX-A.TO", "SECOND.TO"])
+        self.assertEqual(result["market"].unique().tolist(), ["Test Index"])
+
+    def test_curated_universe_deduplicates_index_and_extra_memberships(self) -> None:
+        def frame(symbols: list[str], country: str, market: str) -> pd.DataFrame:
+            rows = []
+            for symbol in symbols:
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "yahoo_symbol": symbol if country == "united states" else f"{symbol}.TO",
+                        "name": symbol,
+                        "full_name": symbol,
+                        "country": country,
+                        "market": market,
+                        "exchange": market,
+                        "exchange_mic": "",
+                        "isin": "",
+                        "currency": "USD" if country == "united states" else "CAD",
+                        "source": "test",
+                        "source_url": "https://example.test",
+                        "is_active": True,
+                        "refreshed_at": pd.Timestamp("2026-07-20"),
+                    }
+                )
+            return pd.DataFrame(rows, columns=STOCK_UNIVERSE_COLUMNS)
+
+        with (
+            patch(
+                "investing.data_fetch.index_universe.fetch_flagship_index_universe",
+                return_value=frame(["AAA", "BBB"], "united states", "S&P 500"),
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_reit_universe",
+                return_value=frame(["BBB", "REIT"], "united states", "US REITs"),
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_dividend_aristocrats",
+                return_value=frame(["AAA", "DIV"], "united states", "US Aristocrats"),
+            ),
+        ):
+            result = fetch_curated_index_universe(["united states"])
+
+        self.assertEqual(result["symbol"].tolist(), ["AAA", "BBB", "REIT", "DIV"])
+        self.assertEqual(result.loc[result["symbol"] == "AAA", "market"].iloc[0], "S&P 500")
+
+
+if __name__ == "__main__":
+    unittest.main()

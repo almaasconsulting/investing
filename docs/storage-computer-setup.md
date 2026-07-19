@@ -62,7 +62,7 @@ If `winget` is unavailable, install PostgreSQL manually from the official Window
 
 ## Clean reinstall on this computer
 
-Do not delete `C:\repo\InvestingData` manually. The reset command preserves it as a timestamped backup:
+For a completely clean rebuild, the reset command can permanently delete `C:\repo\InvestingData` and wipe the application schemas in PostgreSQL. This is irreversible:
 
 1. Stop Streamlit and Dagster with `Ctrl+C` in both terminals.
 2. Close other Python processes using this repository.
@@ -72,10 +72,16 @@ Do not delete `C:\repo\InvestingData` manually. The reset command preserves it a
 Set-Location C:\repo\investing
 .\scripts\reset_local_install.ps1 `
   -DataRoot C:\repo\InvestingData `
+  -DeleteDataInsteadOfBackup `
+  -ResetPostgreSQL `
+  -StopRunningServices `
+  -UnregisterStartupTasks `
+  -PostgresDatabase investing `
+  -PostgresUser investing `
   -ConfirmReset
 ```
 
-This moves the existing directory to `C:\repo\InvestingData.backup.YYYYMMDD-HHMMSS`, removes `.venv` and `.runtime-env.ps1`, and leaves the source repository and PostgreSQL databases untouched.
+The command reuses the PostgreSQL login from `.runtime-env.ps1` (or prompts for its password), drops and recreates the `main`, `bronze`, `silver`, and `gold` schemas, deletes the data directory, `.venv`, and `.runtime-env.ps1`, and leaves the PostgreSQL server, login, database, and source repository intact. Omit `-ResetPostgreSQL` only when PostgreSQL is not installed.
 
 4. Run the automatic PostgreSQL installation command above.
 5. Start Dagster and Streamlit as described below.

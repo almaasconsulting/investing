@@ -134,7 +134,7 @@ class MedallionDagsterDbtTranslator(DagsterDbtTranslator):
 
 @dg.asset(group_name="bronze", compute_kind="python")
 def bronze_stock_universe(context) -> dg.MaterializeResult:
-    """Refresh provider stock lists into the append-oriented landing store."""
+    """Refresh flagship indexes, US/Canadian REITs, and dividend aristocrats."""
     result = refresh_stock_universe(PipelineSettings.from_env())
     context.log.info("Refreshed %s universe rows", result["rows"])
     return dg.MaterializeResult(metadata=result)
@@ -208,7 +208,7 @@ def medallion_dbt_assets(
 universe_refresh_job = dg.define_asset_job(
     "universe_refresh_job",
     selection=dg.AssetSelection.assets(bronze_stock_universe),
-    description="Refresh the configured multi-exchange stock catalog.",
+    description="Refresh curated flagship-index, REIT, and dividend-aristocrat membership.",
 )
 
 stock_batch_refresh_job = dg.define_asset_job(
