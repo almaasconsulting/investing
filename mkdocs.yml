@@ -4,12 +4,17 @@ docs_dir: docs
 site_dir: site
 theme:
   name: mkdocs
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
+  - javascripts/mermaid.js
 nav:
   - Home: index.md
+  - Complete system guide: system-guide.md
   - Architecture: architecture.md
   - Storage computer setup: storage-computer-setup.md
   - Production clean reset: production-reset-runbook.md
   - PostgreSQL: postgresql.md
   - Operations: operations.md
   - Data model: data-model.md
+  - dbt Analytics Engineering certification: dbt-analytics-engineering-certification.md
   - Troubleshooting: troubleshooting.md

@@ -80,9 +80,13 @@ def _dagster_progress_callback(context, label: str):
         remaining = max(total - index, 0)
         eta_seconds = remaining / rate if rate else None
         percent = (100.0 * index / total) if total else 100.0
+        price_providers = "+".join(event.get("price_providers", []) or []) or "none"
+        fundamental_providers = (
+            "+".join(event.get("fundamental_providers", []) or []) or "none"
+        )
         context.log.info(
             "%s progress %s/%s (%.1f%%) | %s | %s | status=%s | "
-            "rows=%s | elapsed=%s | ETA=%s%s",
+            "providers=price:%s,fundamentals:%s | rows=%s | elapsed=%s | ETA=%s%s",
             label,
             index,
             total,
@@ -90,6 +94,8 @@ def _dagster_progress_callback(context, label: str):
             event.get("country", ""),
             event.get("symbol", ""),
             "ok" if not failed else "error",
+            price_providers,
+            fundamental_providers,
             event.get("rows_written", 0),
             _format_duration(elapsed),
             _format_duration(eta_seconds),
@@ -242,7 +248,29 @@ daily_universe_schedule = dg.ScheduleDefinition(
     execution_timezone=os.getenv("INVESTING_TIMEZONE", "Europe/Oslo"),
     default_status=dg.DefaultScheduleStatus.RUNNING,
 )
-def continuous_stock_batch_schedule(context) -> dg.RunRequest:
+def continuous_stock_batch_schedule(context) -> dg.RunRequest | dg.SkipReason:
+    active_statuses = [
+        dg.DagsterRunStatus.QUEUED,
+        dg.DagsterRunStatus.NOT_STARTED,
+        dg.DagsterRunStatus.MANAGED,
+        dg.DagsterRunStatus.STARTING,
+        dg.DagsterRunStatus.STARTED,
+        dg.DagsterRunStatus.CANCELING,
+    ]
+    active_runs = context.instance.get_runs(
+        filters=dg.RunsFilter(
+            job_name="stock_batch_refresh_job",
+            statuses=active_statuses,
+        ),
+        limit=1,
+    )
+    if active_runs:
+        active = active_runs[0]
+        return dg.SkipReason(
+            "A stock_batch_refresh_job run is already active "
+            f"({active.run_id[:8]}, {active.status.value.lower()})."
+        )
+
     partition_key = oldest_batch_partition_key(PipelineSettings.from_env())
     return dg.RunRequest(
         run_key=f"stock-batch:{context.scheduled_execution_time.isoformat()}:{partition_key}",

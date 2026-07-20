@@ -110,14 +110,22 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return df[expected]
 
 
-def _get_stock_data_yahoo(symbol: str, country: str, days: int) -> pd.DataFrame:
-    ticker_symbol = _resolve_yahoo_symbol(symbol, country)
+def _get_stock_data_yahoo(
+    symbol: str,
+    country: str,
+    days: int,
+    yahoo_symbol: str = "",
+) -> pd.DataFrame:
+    ticker_symbol = yahoo_symbol.strip() or _resolve_yahoo_symbol(symbol, country)
     ticker = yf.Ticker(ticker_symbol)
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
     df = ticker.history(start=start_date, end=end_date + timedelta(days=1), interval="1d", auto_adjust=False)
     if df.empty:
-        raise ValueError(f"No Yahoo Finance data returned for {symbol} ({country})")
+        raise ValueError(
+            f"No Yahoo Finance data returned for {ticker_symbol} "
+            f"(Investing/canonical symbol {symbol}, {country})"
+        )
     return _normalize_df(df)
 
 
@@ -195,6 +203,7 @@ def get_stock_data(
     country: str = "norway",
     days: int = 365,
     source: str = "auto",
+    yahoo_symbol: str = "",
 ) -> pd.DataFrame:
     """Fetch historical stock data for the given symbol and country."""
     source = source.strip().lower()
@@ -202,7 +211,7 @@ def get_stock_data(
         raise ValueError("Data source must be one of: auto, investing, yahoo.")
 
     if source == "yahoo":
-        return _get_stock_data_yahoo(symbol, country, days)
+        return _get_stock_data_yahoo(symbol, country, days, yahoo_symbol=yahoo_symbol)
     if source == "investing":
         return _get_stock_data_investing(symbol, country, days)
 
@@ -211,7 +220,9 @@ def get_stock_data(
     yahoo_error = None
     investing_error = None
     try:
-        yahoo_data = _get_stock_data_yahoo(symbol, country, days)
+        yahoo_data = _get_stock_data_yahoo(
+            symbol, country, days, yahoo_symbol=yahoo_symbol
+        )
     except Exception as exc:
         yahoo_error = exc
     try:

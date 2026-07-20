@@ -36,6 +36,7 @@ from .core.ranking import (
     build_rankings,
     build_sector_fundamental_score,
     sector_profile_frame,
+    top_stocks_by_country_sector,
 )
 from .core.portfolio import analyze_stock, analyze_stocks
 from .core.watchlist import analyze_watchlist, append_watchlist_rows, read_watchlist, write_watchlist
@@ -84,6 +85,7 @@ __all__ = [
     "build_rankings",
     "build_sector_fundamental_score",
     "sector_profile_frame",
+    "top_stocks_by_country_sector",
     "compute_stock_metrics",
     "build_scorecard",
     "calculate_altman_z_score",

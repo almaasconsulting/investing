@@ -9,6 +9,7 @@ from investing.core.stock_analysis import (
     _get_yahoo_dividend_metrics,
     compute_dividend_history_metrics,
     merge_fundamentals,
+    get_stock_fundamentals,
 )
 from investing.data_fetch.investing_com import get_stock_data, merge_stock_histories
 
@@ -103,9 +104,11 @@ class ProviderMergeTests(unittest.TestCase):
         yahoo_fetch.return_value = history([("2026-01-02", 10, 12, 9, 11, 100)])
         investing_fetch.return_value = history([("2026-01-03", 20, 22, 19, 21, 200)])
 
-        merged = get_stock_data("TEST", source="auto")
+        merged = get_stock_data("TEST", source="auto", yahoo_symbol="TEST.EXACT")
 
-        yahoo_fetch.assert_called_once()
+        yahoo_fetch.assert_called_once_with(
+            "TEST", "norway", 365, yahoo_symbol="TEST.EXACT"
+        )
         investing_fetch.assert_called_once()
         self.assertEqual(len(merged), 2)
         self.assertEqual(merged.attrs["providers_used"], ["yahoo", "investing"])
@@ -121,6 +124,23 @@ class ProviderMergeTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["close"], 21)
         self.assertEqual(result.attrs["data_source"], "investing")
         self.assertEqual(result.attrs["providers_used"], ["investing"])
+
+    @patch("investing.core.stock_analysis._get_altman_fundamentals", return_value={})
+    @patch("investing.core.stock_analysis._get_yahoo_dividend_metrics", return_value={})
+    @patch("investing.core.stock_analysis.yf.Ticker")
+    def test_fundamentals_use_exact_stored_yahoo_symbol(
+        self, ticker_factory, _dividends, _altman
+    ) -> None:
+        ticker_factory.return_value.info = {}
+
+        get_stock_fundamentals(
+            "NIBE-BST",
+            country="sweden",
+            source="yahoo",
+            yahoo_symbol="NIBE-B.ST",
+        )
+
+        ticker_factory.assert_called_once_with("NIBE-B.ST")
 
 
 if __name__ == "__main__":

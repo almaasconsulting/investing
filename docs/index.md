@@ -2,6 +2,14 @@
 
 This application collects stock-universe, daily-price, fundamental, and analysis data from Yahoo Finance and Investing.com. Dagster schedules and observes updates, dbt transforms the data through Bronze, Silver, and Gold, PostgreSQL stores it, and Streamlit provides interactive analysis.
 
+Read the [complete system guide](system-guide.md) for the connected architecture, data model, orchestration, configuration, operating procedures, diagrams, and change-impact reference.
+
+For vendor-neutral dbt exam preparation, use the
+[dbt Analytics Engineering Certification guide](dbt-analytics-engineering-certification.md).
+It follows the current exam domains and includes concept maps, comparison tables,
+hands-on labs, practice questions, a six-week study plan, and the progression toward
+the dbt Architect certification.
+
 ## Start here
 
 On a new Windows storage/analysis computer, clone this repository, open PowerShell in the repository root, and run:

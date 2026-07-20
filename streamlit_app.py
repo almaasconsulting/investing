@@ -20,13 +20,14 @@ import investing.core.ranking as ranking_module
 
 # Streamlit can retain imported application modules across source hot reloads.
 # Reload when the cached ranking API predates fields required by this UI.
-if getattr(ranking_module, "RANKING_API_VERSION", 0) < 2:
+if getattr(ranking_module, "RANKING_API_VERSION", 0) < 3:
     ranking_module = importlib.reload(ranking_module)
 
 build_rankings = ranking_module.build_rankings
 build_sector_fundamental_score = ranking_module.build_sector_fundamental_score
 parse_number = ranking_module.parse_number
 sector_profile_frame = ranking_module.sector_profile_frame
+top_stocks_by_country_sector = ranking_module.top_stocks_by_country_sector
 score_direction = ranking_module.score_direction
 score_lower_better = ranking_module.score_lower_better
 score_pe = ranking_module.score_pe
@@ -38,7 +39,7 @@ from investing.data_fetch.stock_universe import DEFAULT_MARKET_COUNTRIES
 
 # Pipeline updates added incremental fetch arguments to the portfolio service.
 # Reload both it and its watchlist consumer when Streamlit cached the old API.
-if getattr(portfolio_module, "PORTFOLIO_API_VERSION", 0) < 2:
+if getattr(portfolio_module, "PORTFOLIO_API_VERSION", 0) < 3:
     portfolio_module = importlib.reload(portfolio_module)
     watchlist_module = importlib.reload(watchlist_module)
 
@@ -230,11 +231,11 @@ def format_decimal(value: object, digits: int = 3) -> str:
         return "n/a"
 
 
-def format_percent(value: object) -> str:
+def format_percent(value: object, digits: int = 2) -> str:
     try:
         if value is None or pd.isna(value):
             return "n/a"
-        return f"{float(value):.3%}"
+        return f"{float(value):.{digits}%}"
     except (TypeError, ValueError):
         return "n/a"
 
@@ -271,6 +272,125 @@ PERCENT_POINT_COLUMNS = {
     "sector_percentile",
 }
 
+FIELD_LABELS = {
+    "latest_close": "Latest close",
+    "prev_close": "Previous close",
+    "ma20": "20-day moving average",
+    "ma50": "50-day moving average",
+    "ma200": "200-day moving average",
+    "rsi": "RSI",
+    "rsi14": "RSI (14-day)",
+    "signal_summary": "Signal summary",
+    "price_source": "Price source",
+    "market_cap": "Market capitalization",
+    "pe_ratio": "P/E ratio",
+    "eps": "Earnings per share (EPS)",
+    "one_year_change": "One-year change",
+    "shares_outstanding": "Shares outstanding",
+    "revenue_growth": "Revenue growth",
+    "earnings_growth": "Earnings growth",
+    "return_on_equity": "Return on equity",
+    "return_on_assets": "Return on assets",
+    "profit_margins": "Net profit margin",
+    "operating_margins": "Operating margin",
+    "gross_margins": "Gross margin",
+    "debt_to_equity": "Debt-to-equity ratio",
+    "current_ratio": "Current ratio",
+    "free_cashflow": "Free cash flow",
+    "free_cashflow_yield": "Free-cash-flow yield",
+    "price_to_book": "Price-to-book ratio",
+    "enterprise_to_ebitda": "EV/EBITDA",
+    "peg_ratio": "PEG ratio",
+    "payout_ratio": "Payout ratio",
+    "funds_from_operations": "Funds from operations (FFO)",
+    "funds_from_operations_yield": "FFO yield",
+    "consecutive_dividend_years": "Consecutive dividend years",
+    "dividend_cagr_5y": "Five-year dividend growth",
+    "altman_z_score": "Altman Z-score",
+    "data_source": "Data source",
+}
+
+COMPACT_NUMBER_FIELDS = {
+    "market_cap",
+    "shares_outstanding",
+    "revenue",
+    "free_cashflow",
+    "funds_from_operations",
+}
+PRICE_FIELDS = {"latest_close", "prev_close", "ma20", "ma50", "ma200", "eps"}
+ONE_DECIMAL_FIELDS = {"rsi", "rsi14", "score"}
+TWO_DECIMAL_FIELDS = {
+    "pe_ratio",
+    "beta",
+    "debt_to_equity",
+    "current_ratio",
+    "price_to_book",
+    "enterprise_to_ebitda",
+    "peg_ratio",
+    "altman_z_score",
+}
+INTEGER_FIELDS = {"consecutive_dividend_years", "dividend_years"}
+
+
+def format_field_label(key: object) -> str:
+    field = str(key).strip()
+    if field in FIELD_LABELS:
+        return FIELD_LABELS[field]
+    words = field.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else "Field"
+
+
+def format_compact_number(value: object) -> str:
+    parsed = parse_number(value)
+    if parsed is None:
+        return "n/a"
+    magnitude = abs(parsed)
+    for threshold, suffix in (
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "K"),
+    ):
+        if magnitude >= threshold:
+            return f"{parsed / threshold:,.2f}{suffix}"
+    return f"{parsed:,.0f}"
+
+
+def format_price(value: object) -> str:
+    parsed = parse_number(value)
+    if parsed is None:
+        return "n/a"
+    digits = 4 if abs(parsed) < 1 else 3 if abs(parsed) < 100 else 2
+    return f"{parsed:,.{digits}f}"
+
+
+def format_detail_value(key: str, value: object) -> str:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "n/a"
+    if key in RATIO_PERCENT_COLUMNS:
+        return format_percent(parse_number(value), digits=2)
+    if key in PERCENT_POINT_COLUMNS:
+        parsed = parse_number(value)
+        return f"{parsed:.1f}%" if parsed is not None else "n/a"
+    if key in COMPACT_NUMBER_FIELDS:
+        return format_compact_number(value)
+    if key in PRICE_FIELDS:
+        return format_price(value)
+    if key in INTEGER_FIELDS:
+        parsed = parse_number(value)
+        return f"{parsed:,.0f}" if parsed is not None else "n/a"
+    if key in ONE_DECIMAL_FIELDS:
+        parsed = parse_number(value)
+        return f"{parsed:,.1f}" if parsed is not None else "n/a"
+    if key in TWO_DECIMAL_FIELDS:
+        parsed = parse_number(value)
+        return f"{parsed:,.2f}" if parsed is not None else "n/a"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (int, float)):
+        return f"{float(value):,.2f}"
+    return str(value)
+
 
 def style_numeric_frame(frame: pd.DataFrame, digits: int = 3) -> pd.io.formats.style.Styler:
     """Format financial ratios as percentages without changing their values."""
@@ -291,21 +411,38 @@ def style_numeric_frame(frame: pd.DataFrame, digits: int = 3) -> pd.io.formats.s
 
 
 def detail_frame(values: dict) -> pd.DataFrame:
-    rows = []
-    for key, value in values.items():
-        if key in RATIO_PERCENT_COLUMNS:
-            display_value = format_percent(parse_number(value))
-        elif key in PERCENT_POINT_COLUMNS:
-            parsed = parse_number(value)
-            display_value = f"{parsed:.1f}%" if parsed is not None else ""
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            display_value = f"{float(value):.3f}"
-        elif value is None:
-            display_value = ""
-        else:
-            display_value = str(value)
-        rows.append({"field": str(key), "value": display_value})
+    rows = [
+        {
+            "Indicator": format_field_label(key),
+            "Value": format_detail_value(str(key), value),
+        }
+        for key, value in values.items()
+    ]
     return pd.DataFrame(rows, dtype="string")
+
+
+def render_detail_panel(
+    title: str,
+    description: str,
+    values: dict,
+    *,
+    height: int | None = None,
+) -> None:
+    frame = detail_frame(values)
+    table_height = height or min(520, 38 + max(len(frame), 1) * 35)
+    with st.container(border=True):
+        st.markdown(f"#### {title}")
+        st.caption(description)
+        st.dataframe(
+            frame,
+            width="stretch",
+            hide_index=True,
+            height=table_height,
+            column_config={
+                "Indicator": st.column_config.TextColumn("Indicator", width="medium"),
+                "Value": st.column_config.TextColumn("Value", width="large"),
+            },
+        )
 
 
 def numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -492,6 +629,13 @@ def filter_results_by_frame(results: list[dict], frame: pd.DataFrame) -> list[di
         for result in results
         if (str(result.get("symbol", "")), str(result.get("country", ""))) in keys
     ]
+
+
+def reset_analysis_filter_state() -> None:
+    """Discard stale widget selections when a different saved result set is loaded."""
+    for key in list(st.session_state):
+        if str(key).startswith("analysis_filter_"):
+            del st.session_state[key]
 
 
 SPIDER_METRICS = [
@@ -1156,25 +1300,42 @@ with tab_stock_view:
                 ["Overview", "Latest news", "Quarterly fundamentals", "Annual fundamentals"]
             )
             with overview_view:
-                top_a, top_b, top_c, top_d, top_e = st.columns(5)
-                top_a.metric("Latest close", format_decimal(scorecard.get("latest_close")))
-                top_b.metric("Score", format_decimal(scorecard.get("score")))
-                top_c.metric("Volatility", format_percent(scorecard.get("volatility")))
-                top_d.metric("Price change", format_percent(scorecard.get("price_change")))
-                top_e.metric("Last run", format_timestamp(result.get("last_run_at")) or "n/a")
+                with st.container(border=True):
+                    st.markdown("#### Stock snapshot")
+                    top_a, top_b, top_c, top_d, top_e = st.columns(5)
+                    top_a.metric("Latest close", format_price(scorecard.get("latest_close")))
+                    top_b.metric("Score", format_decimal(scorecard.get("score"), digits=1))
+                    top_c.metric("Volatility", format_percent(scorecard.get("volatility")))
+                    top_d.metric("Price change", format_percent(scorecard.get("price_change")))
+                    top_e.metric("Last run", format_timestamp(result.get("last_run_at")) or "n/a")
 
                 data = result.get("data")
                 if isinstance(data, pd.DataFrame) and not data.empty:
                     chart_data = data.sort_values("date")[["date", "close", "ma20", "ma50", "ma200"]]
-                    st.line_chart(chart_data.set_index("date"), width="stretch")
+                    with st.container(border=True):
+                        st.markdown("#### Price and moving averages")
+                        st.line_chart(chart_data.set_index("date"), width="stretch")
 
                 detail_left, detail_right = st.columns(2)
-                detail_left.dataframe(
-                    detail_frame(technical), width="stretch", hide_index=True
+                detail_height = min(
+                    560,
+                    max(240, 38 + max(len(technical), len(fundamentals), 1) * 35),
                 )
-                detail_right.dataframe(
-                    detail_frame(fundamentals), width="stretch", hide_index=True
-                )
+                with detail_left:
+                    render_detail_panel(
+                        "Technical indicators",
+                        "Trend, momentum and moving-average signals.",
+                        technical,
+                        height=detail_height,
+                    )
+                with detail_right:
+                    render_detail_panel(
+                        "Fundamental indicators",
+                        "Valuation, profitability, growth and dividend measures. "
+                        "Large values use K, M, B and T abbreviations.",
+                        fundamentals,
+                        height=detail_height,
+                    )
 
             with news_view:
                 news = load_stock_news(selected_symbol, country)
@@ -1223,8 +1384,10 @@ with tab_analysis:
     if load_saved:
         cached_results = load_saved_analysis_for_rows(active_rows)
         if cached_results:
+            reset_analysis_filter_state()
             st.session_state["analysis_results"] = cached_results
             st.session_state["filtered_analysis_results"] = cached_results
+            st.session_state.pop("rankings", None)
             latest_run = max(
                 (pd.to_datetime(result.get("last_run_at")) for result in cached_results if result.get("last_run_at")),
                 default=None,
@@ -1331,9 +1494,23 @@ with tab_spider:
                 )
 
 with tab_rankings:
-    results = st.session_state.get("filtered_analysis_results")
-    if results is None:
-        results = st.session_state.get("analysis_results", [])
+    all_results = st.session_state.get("analysis_results", [])
+    filtered_results = st.session_state.get("filtered_analysis_results")
+    results = all_results
+
+    if all_results:
+        ranking_scopes = {f"All loaded analyses ({len(all_results)})": all_results}
+        if filtered_results is not None and filtered_results:
+            ranking_scopes[
+                f"Analysis-tab filtered results ({len(filtered_results)})"
+            ] = filtered_results
+        selected_ranking_scope = st.radio(
+            "Ranking scope",
+            list(ranking_scopes),
+            horizontal=True,
+            key="ranking_scope",
+        )
+        results = ranking_scopes[selected_ranking_scope]
 
     if not results:
         st.info("Load Database Analysis in the Analysis tab, then build rankings.")
@@ -1386,6 +1563,67 @@ with tab_rankings:
 
         rankings = st.session_state.get("rankings")
         if isinstance(rankings, pd.DataFrame) and not rankings.empty:
+            st.subheader("Top 5 stocks by country and sector")
+            st.caption(
+                "Each stock is ranked by the same combined score used below. "
+                "Groups with fewer than five analyzed stocks show every available stock."
+            )
+            top_five = top_stocks_by_country_sector(rankings, limit=5)
+            top_filter_left, top_filter_right = st.columns(2)
+            top_country_options = ["All countries"] + sorted(
+                top_five["country"].dropna().astype(str).unique().tolist()
+            )
+            if st.session_state.get("ranking_top_country") not in top_country_options:
+                st.session_state["ranking_top_country"] = "All countries"
+            selected_top_country = top_filter_left.selectbox(
+                "Top-five country",
+                top_country_options,
+                key="ranking_top_country",
+            )
+            country_filtered_top = top_five
+            if selected_top_country != "All countries":
+                country_filtered_top = country_filtered_top[
+                    country_filtered_top["country"] == selected_top_country
+                ]
+            top_sector_options = ["All sectors"] + sorted(
+                country_filtered_top["sector"].dropna().astype(str).unique().tolist()
+            )
+            if st.session_state.get("ranking_top_sector") not in top_sector_options:
+                st.session_state["ranking_top_sector"] = "All sectors"
+            selected_top_sector = top_filter_right.selectbox(
+                "Top-five sector",
+                top_sector_options,
+                key="ranking_top_sector",
+            )
+            if selected_top_sector != "All sectors":
+                country_filtered_top = country_filtered_top[
+                    country_filtered_top["sector"] == selected_top_sector
+                ]
+
+            top_columns = [
+                "country",
+                "sector",
+                "country_sector_rank",
+                "symbol",
+                "name",
+                "ranking_score",
+                "technical_score",
+                "fundamental_score",
+                "fundamental_coverage",
+                "dividend_yield",
+                "dividend_score",
+                "primary_indicators",
+            ]
+            available_top_columns = [
+                column for column in top_columns if column in country_filtered_top.columns
+            ]
+            st.dataframe(
+                style_numeric_frame(country_filtered_top[available_top_columns]),
+                width="stretch",
+                hide_index=True,
+            )
+
+            st.subheader("All rankings")
             ranking_columns = [
                 "group",
                 "group_rank",

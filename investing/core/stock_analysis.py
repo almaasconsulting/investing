@@ -429,7 +429,12 @@ def _get_investing_dividend_metrics(investpy: Any, symbol: str, country: str) ->
         return {}
 
 
-def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "auto") -> dict[str, Any]:
+def get_stock_fundamentals(
+    symbol: str,
+    country: str = "norway",
+    source: str = "auto",
+    yahoo_symbol: str = "",
+) -> dict[str, Any]:
     source = source.strip().lower()
     if source not in {"auto", "investing", "yahoo"}:
         raise ValueError("Fundamental data source must be one of: auto, investing, yahoo.")
@@ -462,7 +467,7 @@ def get_stock_fundamentals(symbol: str, country: str = "norway", source: str = "
         if source == "investing":
             return merge_fundamentals({}, investing_fundamentals)
 
-    yahoo_symbol = _resolve_yahoo_symbol(symbol, country)
+    yahoo_symbol = yahoo_symbol.strip() or _resolve_yahoo_symbol(symbol, country)
     try:
         ticker = yf.Ticker(yahoo_symbol)
         info = ticker.info or {}

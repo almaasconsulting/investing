@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-RANKING_API_VERSION = 2
+RANKING_API_VERSION = 3
 
 
 def parse_number(value: Any) -> float | None:
@@ -600,3 +600,31 @@ def build_rankings(
     frame = frame.sort_values(["group", "ranking_score"], ascending=[True, False])
     frame["group_rank"] = frame.groupby("group").cumcount() + 1
     return frame
+
+
+def top_stocks_by_country_sector(rankings: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
+    """Return the highest-scoring stocks within every country and sector pair."""
+    required = {"country", "sector", "ranking_score"}
+    missing = required.difference(rankings.columns)
+    if missing:
+        raise ValueError(f"Rankings are missing required columns: {', '.join(sorted(missing))}")
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if rankings.empty:
+        return rankings.copy().assign(country_sector_rank=pd.Series(dtype="int64"))
+
+    ranked = rankings.copy()
+    for column in ("country", "sector"):
+        ranked[column] = ranked[column].fillna("Unknown").astype(str).str.strip()
+        ranked.loc[ranked[column].eq(""), column] = "Unknown"
+
+    sort_columns = ["country", "sector", "ranking_score"]
+    ascending = [True, True, False]
+    if "symbol" in ranked.columns:
+        sort_columns.append("symbol")
+        ascending.append(True)
+    ranked = ranked.sort_values(sort_columns, ascending=ascending, na_position="last")
+    ranked["country_sector_rank"] = ranked.groupby(
+        ["country", "sector"], sort=False
+    ).cumcount() + 1
+    return ranked[ranked["country_sector_rank"] <= limit].reset_index(drop=True)

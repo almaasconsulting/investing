@@ -85,6 +85,9 @@ def analyze_universe_frame(
             min_score=min_score,
             max_volatility=max_volatility,
             data_source=data_source,
+            yahoo_symbols={
+                str(row.symbol): str(getattr(row, "yahoo_symbol", "") or "")
+            },
             fetch_days=fetch_days,
             existing_history=existing,
         )
@@ -143,6 +146,8 @@ def analyze_universe_frame(
                     "symbol": str(row.symbol), "country": str(row.country),
                     "succeeded": not error, "error": error,
                     "rows_written": rows_fetched,
+                    "price_providers": result.get("price_providers", []),
+                    "fundamental_providers": result.get("fundamental_providers", []),
                 })
     return [result for result in ordered_results if result is not None]
 

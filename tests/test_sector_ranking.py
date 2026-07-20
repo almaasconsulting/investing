@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import pandas as pd
+
 from investing.core.ranking import (
     SECTOR_FUNDAMENTAL_PROFILES,
     SECTOR_DIVIDEND_WEIGHTS,
@@ -9,6 +11,7 @@ from investing.core.ranking import (
     build_rankings,
     build_sector_fundamental_score,
     normalize_sector,
+    top_stocks_by_country_sector,
 )
 
 
@@ -96,6 +99,26 @@ class SectorFundamentalScoreTests(unittest.TestCase):
         self.assertEqual(ranked.loc["FAST", "sector_rank"], 1)
         self.assertEqual(ranked.loc["SLOW", "sector_rank"], 2)
         self.assertGreater(ranked.loc["FAST", "fundamental_score"], ranked.loc["SLOW", "fundamental_score"])
+
+    def test_top_stocks_are_ranked_within_each_country_and_sector(self) -> None:
+        rankings = pd.DataFrame(
+            [
+                {"symbol": f"NO{i}", "country": "norway", "sector": "Energy", "ranking_score": 100 - i}
+                for i in range(1, 8)
+            ]
+            + [
+                {"symbol": "US1", "country": "united states", "sector": "Energy", "ranking_score": 75},
+                {"symbol": "NO-T", "country": "norway", "sector": "Technology", "ranking_score": 70},
+            ]
+        )
+
+        top = top_stocks_by_country_sector(rankings, limit=5)
+
+        norway_energy = top[(top["country"] == "norway") & (top["sector"] == "Energy")]
+        self.assertEqual(norway_energy["symbol"].tolist(), ["NO1", "NO2", "NO3", "NO4", "NO5"])
+        self.assertEqual(norway_energy["country_sector_rank"].tolist(), [1, 2, 3, 4, 5])
+        self.assertIn("US1", top["symbol"].tolist())
+        self.assertIn("NO-T", top["symbol"].tolist())
 
 
 if __name__ == "__main__":

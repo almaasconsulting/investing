@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -82,12 +83,14 @@ MAJOR_INDEXES_BY_COUNTRY = {
     ),
     "united states": (
         ConstituentSource("S&P 500", "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 450),
-        ConstituentSource("Nasdaq-100", "https://en.wikipedia.org/wiki/Nasdaq-100", 90),
+        ConstituentSource(
+            "Nasdaq-100", "https://stockanalysis.com/list/nasdaq-100-stocks/", 90
+        ),
         ConstituentSource(
             "Russell 2000",
-            "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund",
+            "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?tab=all&fileType=json",
             1500,
-            "csv",
+            "json",
         ),
     ),
     "canada": (
@@ -111,9 +114,9 @@ MAJOR_INDEXES_BY_COUNTRY = {
         ConstituentSource("DAX 40", "https://en.wikipedia.org/wiki/DAX", 35),
         ConstituentSource(
             "MDAX",
-            "https://www.blackrock.com/uk/individual/products/251845/ishares-mdax-ucits-etf-de-fund/1506575576011.ajax?fileType=csv&fileName=EXS3_holdings&dataType=fund",
+            "https://www.blackrock.com/uk/individual/en/products/251845/ishares-mdax-ucits-etf-de-fund/1506575576011.ajax?tab=all&fileType=json",
             45,
-            "csv",
+            "json",
         ),
     ),
     "switzerland": (ConstituentSource("SMI", "https://en.wikipedia.org/wiki/Swiss_Market_Index", 18),),
@@ -509,6 +512,31 @@ def _constituent_csv(text: str, minimum_rows: int) -> tuple[pd.DataFrame, object
     return frame, symbol_column, name_column
 
 
+def _constituent_json(text: str, minimum_rows: int) -> tuple[pd.DataFrame, object, object | None]:
+    payload = json.loads(text.lstrip("\ufeff"))
+    holdings = payload.get("aaData", [])
+    rows = []
+    for holding in holdings:
+        if not isinstance(holding, list) or len(holding) < 4:
+            continue
+        asset_class = str(holding[3] or "")
+        if asset_class.lower() != "equity":
+            continue
+        rows.append({
+            "Ticker": str(holding[0] or ""),
+            "Name": str(holding[1] or ""),
+            "Sector": str(holding[2] or ""),
+            "Asset Class": asset_class,
+            "ISIN": str(holding[9] or "") if len(holding) > 9 else "",
+        })
+    frame = pd.DataFrame(rows)
+    if len(frame) < minimum_rows:
+        raise ValueError(
+            f"Holdings JSON contained {len(frame)} equity rows; expected at least {minimum_rows}."
+        )
+    return frame, "Ticker", "Name"
+
+
 def _clean_symbol(value: object, country: str) -> str:
     symbol = re.sub(r"\[[^]]*]", "", str(value)).strip().upper()
     symbol = symbol.splitlines()[0].strip()
@@ -524,6 +552,8 @@ def _index_rows(source: ConstituentSource, country: str) -> pd.DataFrame:
     payload = _download_text(source.url)
     if source.format == "csv":
         frame, symbol_column, name_column = _constituent_csv(payload, source.minimum_rows)
+    elif source.format == "json":
+        frame, symbol_column, name_column = _constituent_json(payload, source.minimum_rows)
     else:
         frame, symbol_column, name_column = _constituent_table(payload, source.minimum_rows)
     isin_column = _find_column(frame, ISIN_COLUMN_NAMES)
@@ -668,6 +698,41 @@ def fetch_reit_universe(country: str) -> pd.DataFrame:
     return result
 
 
+def _enrich_provider_symbols(
+    investing_rows: pd.DataFrame,
+    yahoo_reference: pd.DataFrame,
+) -> pd.DataFrame:
+    """Keep Investing symbols while attaching independently sourced Yahoo tickers."""
+    if investing_rows.empty or yahoo_reference.empty:
+        return investing_rows.copy()
+
+    reference = yahoo_reference.copy()
+    reference["_isin_key"] = reference["isin"].fillna("").astype(str).str.strip().str.upper()
+    reference["_name_key"] = reference.apply(
+        lambda row: _normalized_text(row.get("full_name") or row.get("name") or ""),
+        axis=1,
+    )
+    isin_matches = {
+        key: str(group.iloc[0]["yahoo_symbol"])
+        for key, group in reference[reference["_isin_key"].ne("")].groupby("_isin_key")
+        if group["yahoo_symbol"].astype(str).nunique() == 1
+    }
+    name_matches = {
+        key: str(group.iloc[0]["yahoo_symbol"])
+        for key, group in reference[reference["_name_key"].ne("")].groupby("_name_key")
+        if group["yahoo_symbol"].astype(str).nunique() == 1
+    }
+
+    enriched = investing_rows.copy()
+    for index, row in enriched.iterrows():
+        isin_key = str(row.get("isin") or "").strip().upper()
+        name_key = _normalized_text(row.get("full_name") or row.get("name") or "")
+        exact_yahoo_symbol = isin_matches.get(isin_key) or name_matches.get(name_key)
+        if exact_yahoo_symbol:
+            enriched.at[index, "yahoo_symbol"] = exact_yahoo_symbol
+    return enriched
+
+
 def fetch_curated_index_universe(countries: Iterable[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     warnings: list[str] = []
@@ -683,6 +748,10 @@ def fetch_curated_index_universe(countries: Iterable[str]) -> pd.DataFrame:
         # Investing.com component page is missing, blocked, or temporarily stale.
         stable_indexes = fetch_flagship_index_universe(country)
         warnings.extend(stable_indexes.attrs.get("warnings", []))
+        if not catalog_country.empty:
+            country_frames[0] = _enrich_provider_symbols(
+                catalog_country, stable_indexes
+            )
         country_frames.append(stable_indexes)
         if country in {"united states", "canada"}:
             for label, fetcher in (

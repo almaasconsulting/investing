@@ -88,14 +88,36 @@ if (Test-Path $Python) {
 }
 
 if (-not (Test-Path $Python)) {
+    $VenvCreated = $false
     if (Get-Command py -ErrorAction SilentlyContinue) {
         & py -3.12 -m venv $VenvRoot
-        if ($LASTEXITCODE -ne 0) {
+        $VenvCreated = $LASTEXITCODE -eq 0 -and (Test-Path $Python)
+        if (-not $VenvCreated) {
             & py -3.11 -m venv $VenvRoot
+            $VenvCreated = $LASTEXITCODE -eq 0 -and (Test-Path $Python)
         }
-    } elseif (Get-Command python -ErrorAction SilentlyContinue) {
-        & python -m venv $VenvRoot
-    } else {
+    }
+    if (-not $VenvCreated) {
+        $ManagedPythonCandidates = @(
+            (Join-Path $env:USERPROFILE ".local\bin\python3.12.exe"),
+            (Join-Path $env:USERPROFILE ".local\bin\python3.11.exe"),
+            "python3.12",
+            "python3.11",
+            "python"
+        )
+        foreach ($Candidate in $ManagedPythonCandidates) {
+            $ResolvedCandidate = Get-Command $Candidate -ErrorAction SilentlyContinue
+            if (-not $ResolvedCandidate) { continue }
+            $VersionSupported = & $ResolvedCandidate.Source -c (
+                "import sys; print(int((3, 11) <= sys.version_info[:2] <= (3, 12)))"
+            ) 2>$null
+            if ($LASTEXITCODE -ne 0 -or $VersionSupported -ne "1") { continue }
+            & $ResolvedCandidate.Source -m venv $VenvRoot
+            $VenvCreated = $LASTEXITCODE -eq 0 -and (Test-Path $Python)
+            if ($VenvCreated) { break }
+        }
+    }
+    if (-not $VenvCreated) {
         throw "Python 3.11 or 3.12 was not found. Install Python, then rerun this script."
     }
 }

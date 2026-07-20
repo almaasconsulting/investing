@@ -1,16 +1,35 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock, patch
 
 import dagster as dg
 
 from investing.orchestration.definitions import (
     BATCH_PARTITION_COUNT,
+    continuous_stock_batch_schedule,
     defs,
 )
 
 
 class NativeDbtAssetTests(unittest.TestCase):
+    def test_continuous_schedule_skips_when_stock_run_is_active(self) -> None:
+        active_run = Mock(
+            run_id="12345678-abcd",
+            status=dg.DagsterRunStatus.STARTED,
+        )
+        context = Mock()
+        context.instance.get_runs.return_value = [active_run]
+
+        with patch(
+            "investing.orchestration.definitions.oldest_batch_partition_key"
+        ) as oldest_partition:
+            result = continuous_stock_batch_schedule._execution_fn.decorated_fn(context)
+
+        self.assertIsInstance(result, dg.SkipReason)
+        self.assertIn("already active", result.skip_message)
+        oldest_partition.assert_not_called()
+
     def test_dbt_models_are_individual_assets(self) -> None:
         graph = defs.resolve_asset_graph()
         asset_keys = {key.to_user_string() for key in graph.get_all_asset_keys()}

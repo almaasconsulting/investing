@@ -1,4 +1,7 @@
 .venv/
+.python-*-amd64.exe
+.tmp-python-*-amd64.exe
+.tools/
 **/.venv-old*/
 **/.venv.broken*/
 __pycache__/

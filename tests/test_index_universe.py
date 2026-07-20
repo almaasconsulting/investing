@@ -14,6 +14,7 @@ from investing.data_fetch.index_universe import (
     STOCK_UNIVERSE_COLUMNS,
     _fetch_investing_index_components,
     _constituent_csv,
+    _constituent_json,
     _index_rows,
     _parse_investing_index_catalog,
     fetch_curated_index_universe,
@@ -117,6 +118,18 @@ BBB,Beta,Industrials,Equity
         self.assertEqual(frame[symbol_column].tolist(), ["AAA", "BBB"])
         self.assertEqual(name_column, "Name")
 
+    def test_holdings_json_keeps_only_equities(self) -> None:
+        payload = """{
+          "aaData": [
+            ["AAA", "Alpha", "Technology", "Equity", {}, {}, {}, {}, "CUSIP", "US0001"],
+            ["USD", "USD Cash", "Cash", "Cash", {}, {}, {}, {}, "-", "-"],
+            ["BBB", "Beta", "Industrials", "Equity", {}, {}, {}, {}, "CUSIP", "US0002"]
+          ]
+        }"""
+        frame, symbol_column, name_column = _constituent_json(payload, 2)
+        self.assertEqual(frame[symbol_column].tolist(), ["AAA", "BBB"])
+        self.assertEqual(name_column, "Name")
+
     def test_major_index_sources_are_combined_and_deduplicated(self) -> None:
         def source_frame(source: ConstituentSource, _country: str) -> pd.DataFrame:
             symbols = ["OVERLAP", source.name.upper().replace(" ", "-")]
@@ -183,6 +196,48 @@ BBB,Beta,Industrials,Equity
 
         self.assertEqual(result["symbol"].tolist(), ["AAA", "BBB", "REIT", "DIV"])
         self.assertEqual(result.loc[result["symbol"] == "AAA", "market"].iloc[0], "S&P 500")
+
+    def test_catalog_keeps_investing_symbol_but_uses_exact_yahoo_symbol(self) -> None:
+        def row(symbol: str, yahoo_symbol: str, source: str) -> pd.DataFrame:
+            return pd.DataFrame(
+                [{
+                    "symbol": symbol,
+                    "yahoo_symbol": yahoo_symbol,
+                    "name": "Nokian Tyres",
+                    "full_name": "Nokian Tyres Plc",
+                    "country": "finland",
+                    "market": "OMX Helsinki 25",
+                    "exchange": "Nasdaq Helsinki",
+                    "exchange_mic": "XHEL",
+                    "isin": "FI0009005318",
+                    "currency": "EUR",
+                    "source": source,
+                    "source_url": "https://example.test",
+                    "is_active": True,
+                    "refreshed_at": pd.Timestamp("2026-07-20"),
+                }],
+                columns=STOCK_UNIVERSE_COLUMNS,
+            )
+
+        catalog = row("TYRESHE", "TYRESHE.HE", "investing_index_component")
+        catalog.attrs["warnings"] = []
+        stable = row("TYRES", "TYRES.HE", "index_constituent")
+        stable.attrs["warnings"] = []
+        with (
+            patch(
+                "investing.data_fetch.index_universe.fetch_investing_index_catalog_universe",
+                return_value=catalog,
+            ),
+            patch(
+                "investing.data_fetch.index_universe.fetch_flagship_index_universe",
+                return_value=stable,
+            ),
+        ):
+            result = fetch_curated_index_universe(["finland"])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0]["symbol"], "TYRESHE")
+        self.assertEqual(result.iloc[0]["yahoo_symbol"], "TYRES.HE")
 
     def test_optional_enrichment_failure_does_not_abort_flagship_refresh(self) -> None:
         flagship = pd.DataFrame(
