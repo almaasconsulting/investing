@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
         "--universe-source",
         choices=["index"],
         default="index",
-        help="Refresh flagship-index constituents plus US/Canadian REITs and dividend aristocrats.",
+        help="Refresh all Norwegian stocks, major-index constituents elsewhere, and US/Canadian REIT/dividend additions.",
     )
     parser.add_argument(
         "--data-source",

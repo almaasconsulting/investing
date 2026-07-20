@@ -851,7 +851,7 @@ with st.sidebar:
         help="Checked countries are included in universe discovery and filtering.",
     )
     universe_source = "index"
-    st.caption("Universe: flagship national indexes, plus US/Canadian REITs and dividend aristocrats.")
+    st.caption("Universe: all Norwegian stocks; major national indexes elsewhere; plus US/Canadian REITs and dividend aristocrats.")
     data_source = st.selectbox("Market data", ["auto", "yahoo", "investing"], index=0)
     st.caption("Auto queries both providers, prefers Yahoo values, and fills gaps from Investing.com.")
     days = st.number_input("History days", min_value=30, max_value=3650, value=365, step=30)

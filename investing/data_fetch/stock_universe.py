@@ -293,6 +293,31 @@ def fetch_yahoo_exchange_stock_universe(country: str, page_size: int = 250) -> p
     ) if rows else _empty_universe()
 
 
+def fetch_norway_stock_universe() -> pd.DataFrame:
+    """Fetch all Norwegian equities, preferring Euronext's official directory."""
+    errors: list[str] = []
+    providers = (
+        ("Euronext Oslo", fetch_euronext_oslo_stock_universe),
+        ("Yahoo Oslo", lambda: fetch_yahoo_exchange_stock_universe("norway")),
+        ("Investing.com Norway", lambda: fetch_investpy_stock_universe("norway")),
+    )
+    for position, (name, fetcher) in enumerate(providers):
+        try:
+            result = fetcher()
+            if len(result) < 50:
+                raise RuntimeError(f"returned only {len(result)} rows")
+            result = result.drop_duplicates(["country", "yahoo_symbol"], keep="last")
+            result.attrs["warnings"] = (
+                [] if position == 0 else [
+                    f"Norway universe used {name} fallback after: {'; '.join(errors)}"
+                ]
+            )
+            return result
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+    raise RuntimeError("Unable to fetch the complete Norway stock universe: " + "; ".join(errors))
+
+
 def _normalize_countries(countries: Iterable[str] | str | None) -> list[str]:
     if countries is None:
         return list(DEFAULT_MARKET_COUNTRIES)
@@ -311,19 +336,31 @@ def fetch_stock_universe(
     source: str = "index",
 ) -> pd.DataFrame:
     """
-    Fetch the curated flagship-index universe for one or more countries.
+    Fetch all Norwegian stocks and the curated major-index universe elsewhere.
 
     United States and Canada also include REITs and their dividend-aristocrat
-    collections. Exchange-wide discovery remains available only through the
-    lower-level diagnostic functions in this module.
+    collections. Other countries remain restricted to their configured
+    flagship indexes.
     """
     source = source.strip().lower()
     if source not in {"auto", "index"}:
         raise ValueError(
-            "The application universe is index-only. Universe source must be 'index'."
+            "The application uses the curated universe policy. Source must be 'index'."
         )
     normalized_countries = _normalize_countries(countries)
-    universe = fetch_curated_index_universe(normalized_countries)
+    frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
+    if "norway" in normalized_countries:
+        norway = fetch_norway_stock_universe()
+        warnings.extend(norway.attrs.get("warnings", []))
+        frames.append(norway)
+    index_countries = [country for country in normalized_countries if country != "norway"]
+    if index_countries:
+        indexed = fetch_curated_index_universe(index_countries)
+        warnings.extend(indexed.attrs.get("warnings", []))
+        frames.append(indexed)
+    universe = pd.concat(frames, ignore_index=True) if frames else _empty_universe()
+    universe.attrs["warnings"] = warnings
     missing = sorted(set(normalized_countries) - set(universe["country"].unique()))
     if missing:
         raise RuntimeError(

@@ -37,9 +37,6 @@ FLAGSHIP_INDEX_BY_COUNTRY = {
     "canada": ConstituentSource(
         "S&P/TSX 60", "https://en.wikipedia.org/wiki/S%26P/TSX_60", 50
     ),
-    "norway": ConstituentSource(
-        "OBX", "https://en.wikipedia.org/wiki/OBX_Index", 20
-    ),
     "united kingdom": ConstituentSource(
         "FTSE 100", "https://en.wikipedia.org/wiki/FTSE_100_Index", 90
     ),
