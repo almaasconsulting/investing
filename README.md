@@ -23,7 +23,7 @@ Markdown under `docs/` is the documentation source. MkDocs builds the HTML editi
 ## Structure
 
 - `investing/data_fetch/investing_com.py` - fetches stock data from Investing.com via `investpy` and Yahoo Finance via `yfinance`
-- `investing/data_fetch/index_universe.py` - refreshes flagship-index constituents plus US/Canadian REITs and dividend aristocrats
+- `investing/data_fetch/index_universe.py` - discovers constituents from Investing.com's US, Canadian, and European index catalogs, with stable major-index/REIT/dividend fallbacks
 - `investing/db/store.py` - PostgreSQL storage facade
 - `investing/core/clustering.py` - builds return correlations and simple correlation clusters
 - `investing/core/stock_analyzer.py` - calculates simple metrics and scores
@@ -84,7 +84,7 @@ From the UI you can also:
 
 ## Notes
 
-- The installed catalog includes every Norwegian stock from the Oslo markets, S&P 500, S&P/TSX 60, and the flagship indexes for ten other European markets, plus US/Canadian REITs and dividend aristocrats.
+- The installed catalog includes every Norwegian stock from the Oslo markets and deduplicated constituents from Investing.com's US, Canadian, and selected European index catalogs. Configured major indexes plus US/Canadian REIT and dividend collections provide stable fallbacks.
 - Use `investpy` to search and fetch stock data by symbol/name.
 - PostgreSQL stores all production and application records.
 - The database now stores:
@@ -165,7 +165,7 @@ The CLI can analyze multiple symbols at once and optionally save the results to 
 
 ## Stock Universe
 
-The default catalog includes all stocks on the Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo markets, plus S&P 500, S&P/TSX 60, FTSE 100, CAC 40, DAX 40, SMI, OMX Stockholm 30, AEX, FTSE MIB, IBEX 35, OMX Copenhagen 25, and OMX Helsinki 25. US and Canadian REITs and dividend aristocrats are added and deduplicated. Dagster refreshes the catalog daily and continuously processes it in retryable oldest-first batches.
+The default catalog includes all stocks on the Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo markets. Required index sources cover S&P 500, Nasdaq-100, Russell 2000, S&P/TSX 60, S&P/TSX Composite, FTSE 100, FTSE 250, CAC 40, CAC Next 20, DAX 40, MDAX, SMI, OMX Stockholm 30, AEX, FTSE MIB, IBEX 35, OMX Copenhagen 25, and OMX Helsinki 25. Investing.com index catalogs add further resolvable component lists for the selected countries. US and Canadian REITs and dividend aristocrats are added and all overlaps are deduplicated. Dagster refreshes the catalog daily and processes it in retryable oldest-first batches.
 
 Refresh configured index membership into PostgreSQL:
 

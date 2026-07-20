@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import resources
@@ -31,6 +32,14 @@ INVESTING_INDEX_CATALOG_URLS = {
     "europe": "https://www.investing.com/indices/european-indices",
 }
 
+INVESTING_OSEBX_COMPONENTS_URL = (
+    "https://www.investing.com/indices/ose-benchamrk-components"
+)
+EURONEXT_OSEBX_COMPOSITION_URL = (
+    "https://live.euronext.com/en/ajax/"
+    "getStockIndexCompositionBlockContent/NO0010865256-XOSL"
+)
+
 EUROPEAN_INDEX_COUNTRIES = {
     "united kingdom", "france", "germany", "switzerland", "sweden",
     "netherlands", "italy", "spain", "denmark", "finland",
@@ -51,6 +60,7 @@ class ConstituentSource:
     name: str
     url: str
     minimum_rows: int
+    format: str = "html"
 
 
 @dataclass(frozen=True)
@@ -62,43 +72,57 @@ class InvestingIndexEntry:
 
 # Public constituent tables are used as operational mirrors. The index names
 # and membership policies remain those of the corresponding index providers.
-FLAGSHIP_INDEX_BY_COUNTRY = {
-    "united states": ConstituentSource(
-        "S&P 500", "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 450
+MAJOR_INDEXES_BY_COUNTRY = {
+    "norway": (
+        ConstituentSource(
+            "OSE Benchmark (OSEBX)",
+            EURONEXT_OSEBX_COMPOSITION_URL,
+            50,
+        ),
     ),
-    "canada": ConstituentSource(
-        "S&P/TSX 60", "https://en.wikipedia.org/wiki/S%26P/TSX_60", 50
+    "united states": (
+        ConstituentSource("S&P 500", "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 450),
+        ConstituentSource("Nasdaq-100", "https://en.wikipedia.org/wiki/Nasdaq-100", 90),
+        ConstituentSource(
+            "Russell 2000",
+            "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund",
+            1500,
+            "csv",
+        ),
     ),
-    "united kingdom": ConstituentSource(
-        "FTSE 100", "https://en.wikipedia.org/wiki/FTSE_100_Index", 90
+    "canada": (
+        ConstituentSource("S&P/TSX 60", "https://en.wikipedia.org/wiki/S%26P/TSX_60", 50),
+        ConstituentSource(
+            "S&P/TSX Composite",
+            "https://www.blackrock.com/ca/investors/en/products/239837/ishares-sptsx-capped-composite-index-etf/1464253357814.ajax?fileType=csv&fileName=XIC_holdings&dataType=fund",
+            180,
+            "csv",
+        ),
     ),
-    "france": ConstituentSource(
-        "CAC 40", "https://en.wikipedia.org/wiki/CAC_40", 35
+    "united kingdom": (
+        ConstituentSource("FTSE 100", "https://en.wikipedia.org/wiki/FTSE_100_Index", 90),
+        ConstituentSource("FTSE 250", "https://en.wikipedia.org/wiki/FTSE_250_Index", 220),
     ),
-    "germany": ConstituentSource(
-        "DAX 40", "https://en.wikipedia.org/wiki/DAX", 35
+    "france": (
+        ConstituentSource("CAC 40", "https://en.wikipedia.org/wiki/CAC_40", 35),
+        ConstituentSource("CAC Next 20", "https://en.wikipedia.org/wiki/CAC_Next_20", 15),
     ),
-    "switzerland": ConstituentSource(
-        "SMI", "https://en.wikipedia.org/wiki/Swiss_Market_Index", 18
+    "germany": (
+        ConstituentSource("DAX 40", "https://en.wikipedia.org/wiki/DAX", 35),
+        ConstituentSource(
+            "MDAX",
+            "https://www.blackrock.com/uk/individual/products/251845/ishares-mdax-ucits-etf-de-fund/1506575576011.ajax?fileType=csv&fileName=EXS3_holdings&dataType=fund",
+            45,
+            "csv",
+        ),
     ),
-    "sweden": ConstituentSource(
-        "OMX Stockholm 30", "https://en.wikipedia.org/wiki/OMX_Stockholm_30", 25
-    ),
-    "netherlands": ConstituentSource(
-        "AEX", "https://en.wikipedia.org/wiki/AEX_index", 20
-    ),
-    "italy": ConstituentSource(
-        "FTSE MIB", "https://en.wikipedia.org/wiki/FTSE_MIB", 35
-    ),
-    "spain": ConstituentSource(
-        "IBEX 35", "https://en.wikipedia.org/wiki/IBEX_35", 30
-    ),
-    "denmark": ConstituentSource(
-        "OMX Copenhagen 25", "https://en.wikipedia.org/wiki/OMX_Copenhagen_25", 20
-    ),
-    "finland": ConstituentSource(
-        "OMX Helsinki 25", "https://en.wikipedia.org/wiki/OMX_Helsinki_25", 20
-    ),
+    "switzerland": (ConstituentSource("SMI", "https://en.wikipedia.org/wiki/Swiss_Market_Index", 18),),
+    "sweden": (ConstituentSource("OMX Stockholm 30", "https://en.wikipedia.org/wiki/OMX_Stockholm_30", 25),),
+    "netherlands": (ConstituentSource("AEX", "https://en.wikipedia.org/wiki/AEX_index", 20),),
+    "italy": (ConstituentSource("FTSE MIB", "https://en.wikipedia.org/wiki/FTSE_MIB", 35),),
+    "spain": (ConstituentSource("IBEX 35", "https://en.wikipedia.org/wiki/IBEX_35", 30),),
+    "denmark": (ConstituentSource("OMX Copenhagen 25", "https://en.wikipedia.org/wiki/OMX_Copenhagen_25", 20),),
+    "finland": (ConstituentSource("OMX Helsinki 25", "https://en.wikipedia.org/wiki/OMX_Helsinki_25", 20),),
 }
 
 DIVIDEND_ARISTOCRAT_SOURCES = {
@@ -167,6 +191,7 @@ SYMBOL_COLUMN_NAMES = {
     "symbol", "ticker", "ticker symbol", "ticker (yahoo)", "epic", "code",
     "exchange ticker", "yahoo ticker",
 }
+ISIN_COLUMN_NAMES = {"isin", "isin code"}
 NAME_COLUMN_NAMES = {
     "company", "company name", "constituent", "security", "name",
 }
@@ -359,6 +384,14 @@ def fetch_investing_index_catalog_universe(countries: Iterable[str]) -> pd.DataF
     entries: list[InvestingIndexEntry] = []
     warnings: list[str] = []
     catalog_requests: list[tuple[str, set[str], str | None]] = []
+    if "norway" in requested:
+        entries.append(
+            InvestingIndexEntry(
+                name="OSE Benchmark (OSEBX)",
+                country="norway",
+                components_url=INVESTING_OSEBX_COMPONENTS_URL,
+            )
+        )
     for country in ("united states", "canada"):
         if country in requested:
             catalog_requests.append((INVESTING_INDEX_CATALOG_URLS[country], {country}, country))
@@ -388,11 +421,22 @@ def fetch_investing_index_catalog_universe(countries: Iterable[str]) -> pd.DataF
             stock_reference = pd.DataFrame()
             warnings.append(f"Investing.com stock reference unavailable: {exc}")
         if not stock_reference.empty:
-            for entry in entries:
-                try:
-                    frames.append(_fetch_investing_index_components(entry, stock_reference))
-                except Exception as exc:
-                    failed_components.append(f"{entry.name}: {exc}")
+            # Catalogs contain many overlapping indexes. A small worker pool
+            # keeps the daily universe refresh practical without flooding the
+            # provider with one connection per index.
+            with ThreadPoolExecutor(max_workers=min(6, len(entries))) as executor:
+                futures = {
+                    executor.submit(
+                        _fetch_investing_index_components, entry, stock_reference
+                    ): entry
+                    for entry in entries
+                }
+                for future in as_completed(futures):
+                    entry = futures[future]
+                    try:
+                        frames.append(future.result())
+                    except Exception as exc:
+                        failed_components.append(f"{entry.name}: {exc}")
 
     if failed_components:
         sample = "; ".join(failed_components[:5])
@@ -442,6 +486,29 @@ def _constituent_table(html: str, minimum_rows: int) -> tuple[pd.DataFrame, obje
     return frame, symbol_column, name_column
 
 
+def _constituent_csv(text: str, minimum_rows: int) -> tuple[pd.DataFrame, object, object | None]:
+    lines = text.lstrip("\ufeff").splitlines()
+    header_index = next((
+        index for index, line in enumerate(lines)
+        if len(line.replace('"', "").split(",")) >= 2
+        and "ticker" in line.replace('"', "").split(",", 1)[0].strip().lower()
+        and line.replace('"', "").split(",", 2)[1].strip().lower() == "name"
+    ), None)
+    if header_index is None:
+        raise ValueError("No holdings CSV header with ticker and name was found.")
+    frame = pd.read_csv(StringIO("\n".join(lines[header_index:])), dtype=str)
+    asset_column = _find_column(frame, {"asset class"})
+    if asset_column is not None:
+        frame = frame[frame[asset_column].fillna("").str.lower() == "equity"]
+    symbol_column = _find_column(frame, SYMBOL_COLUMN_NAMES)
+    name_column = _find_column(frame, NAME_COLUMN_NAMES)
+    if symbol_column is None or len(frame) < minimum_rows:
+        raise ValueError(
+            f"Holdings CSV contained {len(frame)} equity rows; expected at least {minimum_rows}."
+        )
+    return frame, symbol_column, name_column
+
+
 def _clean_symbol(value: object, country: str) -> str:
     symbol = re.sub(r"\[[^]]*]", "", str(value)).strip().upper()
     symbol = symbol.splitlines()[0].strip()
@@ -454,9 +521,12 @@ def _clean_symbol(value: object, country: str) -> str:
 
 
 def _index_rows(source: ConstituentSource, country: str) -> pd.DataFrame:
-    frame, symbol_column, name_column = _constituent_table(
-        _download_text(source.url), source.minimum_rows
-    )
+    payload = _download_text(source.url)
+    if source.format == "csv":
+        frame, symbol_column, name_column = _constituent_csv(payload, source.minimum_rows)
+    else:
+        frame, symbol_column, name_column = _constituent_table(payload, source.minimum_rows)
+    isin_column = _find_column(frame, ISIN_COLUMN_NAMES)
     exchange, mic = PRIMARY_MARKET_BY_COUNTRY[country]
     refreshed_at = _utc_now()
     rows: list[dict] = []
@@ -476,7 +546,11 @@ def _index_rows(source: ConstituentSource, country: str) -> pd.DataFrame:
                 "market": source.name,
                 "exchange": exchange,
                 "exchange_mic": mic,
-                "isin": "",
+                "isin": (
+                    str(row.get(isin_column, "")).strip()
+                    if isin_column is not None
+                    else ""
+                ),
                 "currency": DEFAULT_CURRENCY_BY_COUNTRY[country],
                 "source": "index_constituent",
                 "source_url": source.url,
@@ -495,10 +569,23 @@ def _index_rows(source: ConstituentSource, country: str) -> pd.DataFrame:
 
 def fetch_flagship_index_universe(country: str) -> pd.DataFrame:
     try:
-        source = FLAGSHIP_INDEX_BY_COUNTRY[country]
+        sources = MAJOR_INDEXES_BY_COUNTRY[country]
     except KeyError as exc:
-        raise ValueError(f"No flagship index is configured for {country!r}.") from exc
-    return _index_rows(source, country)
+        raise ValueError(f"No major index is configured for {country!r}.") from exc
+    frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
+    for position, source in enumerate(sources):
+        try:
+            frames.append(_index_rows(source, country))
+        except Exception as exc:
+            if position == 0:
+                raise
+            warnings.append(f"{country} {source.name} enrichment skipped: {exc}")
+    result = pd.concat(frames, ignore_index=True).drop_duplicates(
+        ["country", "yahoo_symbol"], keep="first"
+    )
+    result.attrs["warnings"] = warnings
+    return result
 
 
 def fetch_dividend_aristocrats(country: str) -> pd.DataFrame:
@@ -594,7 +681,9 @@ def fetch_curated_index_universe(countries: Iterable[str]) -> pd.DataFrame:
             country_frames.append(catalog_country)
         # Always retain the stable flagship mirror. It fills gaps when an
         # Investing.com component page is missing, blocked, or temporarily stale.
-        country_frames.append(fetch_flagship_index_universe(country))
+        stable_indexes = fetch_flagship_index_universe(country)
+        warnings.extend(stable_indexes.attrs.get("warnings", []))
+        country_frames.append(stable_indexes)
         if country in {"united states", "canada"}:
             for label, fetcher in (
                 ("REIT", fetch_reit_universe),

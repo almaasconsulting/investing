@@ -4,7 +4,7 @@
 
 Dagster uses three independent jobs:
 
-1. `universe_refresh_job` refreshes all Norwegian Oslo-market stocks and flagship-index membership elsewhere, then adds US/Canadian REITs and dividend aristocrats. A failed required source leaves the previous universe unchanged.
+1. `universe_refresh_job` refreshes all Norwegian Oslo-market stocks and discovers companies from Investing.com's US, Canadian, and selected European index catalogs. Stable major-index, REIT, and dividend sources fill gaps; overlaps are deduplicated and a failed required fallback leaves the previous universe unchanged.
 2. `stock_batch_refresh_job` runs one deterministic stock partition every 15 minutes. Each asset takes up to `INVESTING_BATCH_SIZE` oldest stocks in that partition for prices/fundamentals and news/statements. Provider requests use four concurrent workers by default.
 3. `medallion_refresh_job` executes the native dbt assets hourly. Dagster displays every Bronze, Silver, and Gold model separately, including lineage and dbt tests as asset checks.
 
@@ -33,7 +33,7 @@ Runs are observable in the Dagster UI. A failed stock is recorded in the run sum
 
 Streamlit uses the same shared ingestion/persistence service. An update started in the app therefore follows identical provider-merging rules, while PostgreSQL safely supports concurrent reads and writes.
 
-Stock View reads cached Silver/Gold news and statement history. **Refresh selected stock** fetches only that stock and rebuilds the medallion models. Country and market selectors show checked selections. The catalog contains all Norwegian stocks, each other country's flagship index, and the US/Canadian REIT and dividend-aristocrat additions. A continuous schedule loops through this curated universe in retryable batches of 200 stocks.
+Stock View reads cached Silver/Gold news and statement history. **Refresh selected stock** fetches only that stock and rebuilds the medallion models. Country and market selectors show checked selections. The catalog contains all Norwegian stocks plus deduplicated companies from the configured Investing.com index catalogs, with stable major-index/REIT/dividend fallbacks. A continuous schedule loops through this curated universe in retryable batches.
 
 For a database-wide sector comparison, select the desired countries/markets, choose **Use all filtered stocks**, then click **Load Database Analysis**. Do not use **Run Analysis** for the entire database; live app analysis is capped at one batch. Build sector rankings from the saved Dagster results.
 
