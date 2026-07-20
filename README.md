@@ -84,7 +84,7 @@ From the UI you can also:
 
 ## Notes
 
-- The installed catalog is intentionally curated: S&P 500, S&P/TSX 60, and the flagship index for Norway and ten major European markets, plus US/Canadian REITs and dividend aristocrats.
+- The installed catalog includes every Norwegian stock from the Oslo markets, S&P 500, S&P/TSX 60, and the flagship indexes for ten other European markets, plus US/Canadian REITs and dividend aristocrats.
 - Use `investpy` to search and fetch stock data by symbol/name.
 - PostgreSQL stores all production and application records.
 - The database now stores:
@@ -165,7 +165,7 @@ The CLI can analyze multiple symbols at once and optionally save the results to 
 
 ## Stock Universe
 
-The default catalog includes S&P 500, S&P/TSX 60, OBX, FTSE 100, CAC 40, DAX 40, SMI, OMX Stockholm 30, AEX, FTSE MIB, IBEX 35, OMX Copenhagen 25, and OMX Helsinki 25. US and Canadian REITs and dividend aristocrats are added and deduplicated. Dagster refreshes membership daily and continuously processes the curated universe in retryable oldest-first batches.
+The default catalog includes all stocks on the Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo markets, plus S&P 500, S&P/TSX 60, FTSE 100, CAC 40, DAX 40, SMI, OMX Stockholm 30, AEX, FTSE MIB, IBEX 35, OMX Copenhagen 25, and OMX Helsinki 25. US and Canadian REITs and dividend aristocrats are added and deduplicated. Dagster refreshes the catalog daily and continuously processes it in retryable oldest-first batches.
 
 Refresh configured index membership into PostgreSQL:
 
@@ -173,7 +173,7 @@ Refresh configured index membership into PostgreSQL:
 python main.py --refresh-universe --country norway --universe-source index
 ```
 
-Norway refreshes use the OBX constituent list. A failed required constituent download aborts the refresh before existing membership is replaced.
+Norway refreshes prefer Euronext's complete official Oslo product directory, with Yahoo and Investing.com fallbacks. A failed required catalog download aborts the refresh before existing membership is replaced.
 
 List all Norwegian rows now stored in PostgreSQL:
 

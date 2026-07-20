@@ -25,7 +25,7 @@ Dagster orchestrates independent universe, partitioned ingestion, and dbt jobs
 
 The Python write API owns PostgreSQL's configured landing-schema tables. Writes are append-oriented and include `ingested_at`, source names, field-source JSON, complete provider-payload JSON for fundamentals, and provider-specific OHLCV columns for prices.
 
-The daily universe is membership-based rather than exchange-wide. It contains S&P 500, S&P/TSX 60, and the configured European flagship indexes, with additional US/Canadian REIT and dividend-aristocrat collections. A refresh downloads every required membership source before replacing any selected country, preventing a partial provider response from erasing a valid universe.
+The daily universe contains all Norwegian equities from the Oslo Bors, Euronext Growth Oslo, and Euronext Expand Oslo markets. Other countries are membership-based: S&P 500, S&P/TSX 60, and the configured European flagship indexes, with additional US/Canadian REIT and dividend-aristocrat collections. A required catalog failure occurs before replacement, preventing a partial response from erasing a valid country universe; optional US/Canadian enrichments emit warnings and retain the required index constituents.
 
 dbt copies new landing rows into physical tables in the `bronze` schema. Bronze is the durable source-shaped layer used for replay and audit. It deliberately performs almost no business cleanup.
 
