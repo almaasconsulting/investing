@@ -5,32 +5,60 @@ from typing import Iterable
 
 import pandas as pd
 
-from investing.data_fetch.investing_com import get_stock_data
+from investing.db.store import query_stock_histories
 
 
 def build_close_price_matrix(
     symbols: Iterable[str],
     country_by_symbol: dict[str, str],
     days: int,
-    data_source: str = "yahoo",
 ) -> tuple[pd.DataFrame, list[dict]]:
-    prices: dict[str, pd.Series] = {}
-    errors: list[dict] = []
-
-    for symbol in symbols:
-        country = country_by_symbol.get(symbol, "norway")
-        try:
-            df = get_stock_data(symbol, country=country, days=days, source=data_source)
-            series = df.sort_values("date").set_index("date")["close"].rename(symbol)
-            prices[symbol] = series
-        except Exception as exc:
-            errors.append({"symbol": symbol, "country": country, "error": str(exc)})
-
-    if not prices:
+    """Build a close-price matrix exclusively from persisted PostgreSQL data."""
+    requested = list(dict.fromkeys(str(symbol).strip() for symbol in symbols))
+    stocks = [
+        (symbol, country_by_symbol.get(symbol, "norway"))
+        for symbol in requested
+        if symbol
+    ]
+    history = query_stock_histories(stocks, days=days)
+    if history.empty:
+        errors = [
+            {
+                "symbol": symbol,
+                "country": country,
+                "error": "No stored price history in the selected date range.",
+            }
+            for symbol, country in stocks
+        ]
         return pd.DataFrame(), errors
 
-    matrix = pd.concat(prices.values(), axis=1).sort_index()
-    return matrix.dropna(axis=1, how="all"), errors
+    history = history.copy()
+    history["date"] = pd.to_datetime(history["date"], errors="coerce")
+    history["close"] = pd.to_numeric(history["close"], errors="coerce")
+    history = history.dropna(subset=["date", "symbol", "close"])
+    matrix = (
+        history.pivot_table(
+            index="date",
+            columns="symbol",
+            values="close",
+            aggfunc="last",
+        )
+        .sort_index()
+        .dropna(axis=1, how="all")
+    )
+    matrix.columns.name = None
+
+    available = {str(symbol).lower() for symbol in matrix.columns}
+    errors = [
+        {
+            "symbol": symbol,
+            "country": country,
+            "error": "No stored price history in the selected date range.",
+        }
+        for symbol, country in stocks
+        if symbol.lower() not in available
+    ]
+    return matrix, errors
 
 
 def compute_return_correlation(price_matrix: pd.DataFrame) -> pd.DataFrame:

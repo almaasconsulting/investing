@@ -92,6 +92,19 @@ def load_statement_trends(
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_clustering_price_matrix(
+    stocks: tuple[tuple[str, str], ...],
+    days: int,
+) -> tuple[pd.DataFrame, list[dict]]:
+    symbols = [symbol for symbol, _country in stocks]
+    return build_close_price_matrix(
+        symbols,
+        country_by_symbol=dict(stocks),
+        days=days,
+    )
+
+
 FUNDAMENTAL_TREND_METRICS = [
     "revenue",
     "gross_profit",
@@ -941,14 +954,20 @@ def format_cli_report(results: list[dict], fallback_source: str) -> str:
     return "\n".join(lines).strip()
 
 
-def build_correlation_groups(universe: pd.DataFrame, days: int, data_source: str, min_correlation: float) -> tuple[dict[str, str], dict]:
+def build_correlation_groups(
+    universe: pd.DataFrame,
+    days: int,
+    min_correlation: float,
+) -> tuple[dict[str, str], dict]:
     symbol_list = universe["symbol"].dropna().astype(str).tolist()
     country_map = dict(zip(universe["symbol"], universe["country"]))
-    price_matrix, errors = build_close_price_matrix(
-        symbol_list,
-        country_by_symbol=country_map,
-        days=days,
-        data_source=data_source,
+    stocks = tuple(
+        (symbol, str(country_map.get(symbol, "norway")))
+        for symbol in symbol_list
+    )
+    price_matrix, errors = load_clustering_price_matrix(
+        stocks,
+        days,
     )
     correlation = compute_return_correlation(price_matrix)
     clusters = cluster_by_correlation(correlation, min_correlation=min_correlation)
@@ -1548,7 +1567,6 @@ with tab_rankings:
                     cluster_map, cluster_result = build_correlation_groups(
                         ranking_universe,
                         days=int(days),
-                        data_source=data_source,
                         min_correlation=float(min_correlation),
                     )
                     st.session_state["cluster_result"] = cluster_result
@@ -1680,16 +1698,22 @@ with tab_rankings:
             st.dataframe(round_numeric_frame(summary), width="stretch", hide_index=True)
 
 with tab_clusters:
+    st.caption(
+        "Clustering uses price history already stored by Dagster in PostgreSQL; "
+        "it does not contact market-data providers."
+    )
     run_clusters = st.button("Run Clustering", type="primary", disabled=active_rows.empty)
     if run_clusters:
         symbol_list = active_rows["symbol"].dropna().astype(str).tolist()
         country_map = dict(zip(active_rows["symbol"], active_rows["country"]))
         with st.spinner("Building correlation matrix"):
-            price_matrix, errors = build_close_price_matrix(
-                symbol_list,
-                country_by_symbol=country_map,
-                days=int(days),
-                data_source=data_source,
+            stocks = tuple(
+                (symbol, str(country_map.get(symbol, "norway")))
+                for symbol in symbol_list
+            )
+            price_matrix, errors = load_clustering_price_matrix(
+                stocks,
+                int(days),
             )
             correlation = compute_return_correlation(price_matrix)
             clusters = cluster_by_correlation(correlation, min_correlation=float(min_correlation))
@@ -1719,4 +1743,8 @@ with tab_clusters:
             left.dataframe(round_numeric_frame(pairs.head(20)), width="stretch", hide_index=True)
             right.dataframe(round_numeric_frame(pairs.sort_values("correlation").head(20)), width="stretch", hide_index=True)
         if errors:
+            st.caption(
+                "Stocks listed below do not yet have stored prices for the "
+                "selected history window. Let the Dagster batch schedule ingest them."
+            )
             st.dataframe(round_numeric_frame(pd.DataFrame(errors)), width="stretch", hide_index=True)

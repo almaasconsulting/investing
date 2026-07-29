@@ -641,6 +641,73 @@ def query_stock_history(ticker: str, country: str = "norway", db_path: Path | No
         con.close()
 
 
+def query_stock_histories(
+    stocks: Iterable[tuple[str, str]],
+    days: int = 365,
+    db_path: Path | None = None,
+) -> pd.DataFrame:
+    """Return the latest stored close for many stocks in one database query."""
+    requested_rows = []
+    seen: set[tuple[str, str]] = set()
+    for symbol, country in stocks:
+        symbol = str(symbol or "").strip()
+        country = str(country or "norway").strip().lower()
+        identity = (symbol.lower(), country)
+        if not symbol or identity in seen:
+            continue
+        seen.add(identity)
+        requested_rows.append(
+            {
+                "symbol": symbol,
+                "lookup_symbol": symbol.lower(),
+                "country": country,
+            }
+        )
+
+    if not requested_rows:
+        return pd.DataFrame(columns=["date", "symbol", "country", "close"])
+    if days < 1:
+        raise ValueError("days must be at least 1")
+
+    con = init_db(db_path)
+    try:
+        con.register(
+            "requested_stock_histories",
+            pd.DataFrame(requested_rows),
+            column_types={
+                "symbol": "TEXT",
+                "lookup_symbol": "TEXT",
+                "country": "TEXT",
+            },
+        )
+        query = """
+            SELECT date, symbol, country, close
+            FROM (
+                SELECT
+                    h.date,
+                    r.symbol,
+                    r.country,
+                    h.close,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.lookup_symbol, r.country, h.date
+                        ORDER BY h.ingested_at DESC NULLS LAST
+                    ) AS row_rank
+                FROM stock_history h
+                JOIN requested_stock_histories r
+                  ON LOWER(h.ticker) = r.lookup_symbol
+                 AND LOWER(h.country) = r.country
+                WHERE h.date >= CURRENT_DATE - CAST(? AS INTEGER)
+                  AND h.close IS NOT NULL
+            ) ranked
+            WHERE row_rank = 1
+            ORDER BY date, symbol
+        """
+        return con.execute(query, [int(days)]).df()
+    finally:
+        con.unregister("requested_stock_histories")
+        con.close()
+
+
 def query_fundamental_snapshots(ticker: str, country: str = "norway", db_path: Path | None = None) -> pd.DataFrame:
     con = init_db(db_path)
     try:
