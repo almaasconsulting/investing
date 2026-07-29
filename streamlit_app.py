@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib
+import math
 from dataclasses import replace
 
 import pandas as pd
@@ -10,17 +11,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from investing.core.clustering import (
+    build_stock_similarity,
     build_close_price_matrix,
     cluster_by_correlation,
+    cluster_distance_matrix,
+    cluster_network_layout,
+    cluster_relationship_summary,
     compute_return_correlation,
     correlation_pairs,
+    nearest_cluster_edges,
 )
 from investing.core.html_report import generate_watchlist_report
 import investing.core.ranking as ranking_module
 
 # Streamlit can retain imported application modules across source hot reloads.
 # Reload when the cached ranking API predates fields required by this UI.
-if getattr(ranking_module, "RANKING_API_VERSION", 0) < 3:
+if getattr(ranking_module, "RANKING_API_VERSION", 0) < 4:
     ranking_module = importlib.reload(ranking_module)
 
 build_rankings = ranking_module.build_rankings
@@ -28,6 +34,9 @@ build_sector_fundamental_score = ranking_module.build_sector_fundamental_score
 parse_number = ranking_module.parse_number
 sector_profile_frame = ranking_module.sector_profile_frame
 top_stocks_by_country_sector = ranking_module.top_stocks_by_country_sector
+top_dividend_recommendations_by_country = (
+    ranking_module.top_dividend_recommendations_by_country
+)
 score_direction = ranking_module.score_direction
 score_lower_better = ranking_module.score_lower_better
 score_pe = ranking_module.score_pe
@@ -208,10 +217,32 @@ def rows_from_results(results: list[dict]) -> pd.DataFrame:
     for result in results:
         if result.get("error"):
             continue
+        fundamentals = result.get("fundamentals", {})
+        dividend_yield = parse_number(fundamentals.get("dividend_yield"))
+        dividend_years = parse_number(fundamentals.get("dividend_years_paid"))
+        dividend_payer = (
+            bool((dividend_yield or 0) > 0 or (dividend_years or 0) > 0)
+            if dividend_yield is not None or dividend_years is not None
+            else None
+        )
         rows.append(
             {
                 "symbol": result.get("symbol"),
                 "country": result.get("country", "norway"),
+                "name": result.get("name", ""),
+                "sector": fundamentals.get("sector", "Unknown"),
+                "industry": fundamentals.get("industry", "Unknown"),
+                "market_cap": parse_number(fundamentals.get("market_cap")),
+                "pe_ratio": parse_number(fundamentals.get("pe_ratio")),
+                "price_to_book": parse_number(fundamentals.get("price_to_book")),
+                "return_on_equity": parse_number(fundamentals.get("return_on_equity")),
+                "profit_margins": parse_number(fundamentals.get("profit_margins")),
+                "revenue_growth": parse_number(fundamentals.get("revenue_growth")),
+                "earnings_growth": parse_number(fundamentals.get("earnings_growth")),
+                "debt_to_equity": parse_number(fundamentals.get("debt_to_equity")),
+                "current_ratio": parse_number(fundamentals.get("current_ratio")),
+                "dividend_yield": dividend_yield,
+                "dividend_payer": dividend_payer,
             }
         )
     return pd.DataFrame(rows)
@@ -850,9 +881,25 @@ def load_saved_analysis_for_rows(
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_all_saved_analysis() -> list[dict]:
+    """Load the latest saved analysis for every stock currently in PostgreSQL."""
+    return query_latest_analysis_snapshots(include_history=False)
+
+
 def load_sector_metadata_for_rows(universe: pd.DataFrame) -> pd.DataFrame:
     if universe.empty:
-        return pd.DataFrame(columns=["symbol", "country", "sector", "industry", "last_run_at"])
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "country",
+                "sector",
+                "industry",
+                "dividend_status",
+                "dividend_payer",
+                "last_run_at",
+            ]
+        )
 
     snapshots = query_latest_analysis_snapshots(
         countries=universe["country"].dropna().astype(str).unique().tolist(),
@@ -864,12 +911,39 @@ def load_sector_metadata_for_rows(universe: pd.DataFrame) -> pd.DataFrame:
         fundamentals = result.get("fundamentals", {})
         sector = str(fundamentals.get("sector") or "").strip()
         industry = str(fundamentals.get("industry") or "").strip()
+        dividend_yield = parse_number(fundamentals.get("dividend_yield"))
+        dividend_years = parse_number(fundamentals.get("dividend_years_paid"))
+        dividend_known = dividend_yield is not None or dividend_years is not None
+        dividend_payer = (
+            bool((dividend_yield or 0) > 0 or (dividend_years or 0) > 0)
+            if dividend_known
+            else None
+        )
         rows.append(
             {
                 "symbol": str(result.get("symbol", "")).upper(),
                 "country": str(result.get("country", "")).lower(),
                 "sector": sector if sector and sector.lower() != "none" else "Unknown",
                 "industry": industry if industry and industry.lower() != "none" else "Unknown",
+                "market_cap": parse_number(fundamentals.get("market_cap")),
+                "pe_ratio": parse_number(fundamentals.get("pe_ratio")),
+                "price_to_book": parse_number(fundamentals.get("price_to_book")),
+                "return_on_equity": parse_number(fundamentals.get("return_on_equity")),
+                "profit_margins": parse_number(fundamentals.get("profit_margins")),
+                "revenue_growth": parse_number(fundamentals.get("revenue_growth")),
+                "earnings_growth": parse_number(fundamentals.get("earnings_growth")),
+                "debt_to_equity": parse_number(fundamentals.get("debt_to_equity")),
+                "current_ratio": parse_number(fundamentals.get("current_ratio")),
+                "dividend_yield": dividend_yield,
+                "dividend_years_paid": dividend_years,
+                "dividend_payer": dividend_payer,
+                "dividend_status": (
+                    "Dividend payer"
+                    if dividend_payer is True
+                    else "Non-dividend payer"
+                    if dividend_payer is False
+                    else "Unknown"
+                ),
                 "last_run_at": result.get("last_run_at"),
             }
         )
@@ -958,6 +1032,8 @@ def build_correlation_groups(
     universe: pd.DataFrame,
     days: int,
     min_correlation: float,
+    max_clusters: int,
+    fundamental_weight: float,
 ) -> tuple[dict[str, str], dict]:
     symbol_list = universe["symbol"].dropna().astype(str).tolist()
     country_map = dict(zip(universe["symbol"], universe["country"]))
@@ -969,19 +1045,296 @@ def build_correlation_groups(
         stocks,
         days,
     )
-    correlation = compute_return_correlation(price_matrix)
-    clusters = cluster_by_correlation(correlation, min_correlation=min_correlation)
+    components = build_stock_similarity(
+        price_matrix,
+        universe,
+        fundamental_weight=fundamental_weight,
+    )
+    similarity = components["similarity"]
+    clusters = cluster_by_correlation(
+        similarity,
+        min_correlation=min_correlation,
+        max_clusters=max_clusters,
+    )
     cluster_map = {
         row.symbol: f"Cluster {row.cluster}"
         for row in clusters.itertuples(index=False)
     }
     return cluster_map, {
         "prices": price_matrix,
-        "correlation": correlation,
+        "correlation": similarity,
+        "similarity": similarity,
+        **components,
         "clusters": clusters,
-        "pairs": correlation_pairs(correlation) if not correlation.empty else pd.DataFrame(),
+        "pairs": (
+            correlation_pairs(components["return_correlation"])
+            if not components["return_correlation"].empty
+            else pd.DataFrame()
+        ),
         "errors": errors,
+        "metadata": universe.copy(),
+        "max_clusters": max_clusters,
+        "fundamental_weight": fundamental_weight,
     }
+
+
+def enrich_cluster_metadata(
+    universe: pd.DataFrame,
+    sector_frame: pd.DataFrame,
+) -> pd.DataFrame:
+    metadata = universe.copy()
+    if metadata.empty or sector_frame.empty:
+        return metadata
+    extra_columns = list(sector_frame.columns)
+    extras = sector_frame[extra_columns].drop_duplicates(["symbol", "country"])
+    for column in extra_columns:
+        if column in {"symbol", "country"}:
+            continue
+        if column in metadata.columns:
+            metadata = metadata.drop(columns=column)
+    return metadata.merge(extras, on=["symbol", "country"], how="left")
+
+
+def build_cluster_map_figure(
+    correlation: pd.DataFrame,
+    clusters: pd.DataFrame,
+    metadata: pd.DataFrame,
+    *,
+    dimensions: int,
+    links_per_cluster: int,
+    return_correlation: pd.DataFrame | None = None,
+    fundamental_similarity: pd.DataFrame | None = None,
+) -> go.Figure:
+    distances = cluster_distance_matrix(correlation, clusters)
+    layout = cluster_network_layout(distances, dimensions=dimensions)
+    edges = nearest_cluster_edges(distances, links_per_cluster=links_per_cluster)
+    centers = layout.set_index("cluster").to_dict("index")
+    cluster_ids = list(layout["cluster"])
+    members_by_cluster = {
+        cluster_id: group["symbol"].astype(str).tolist()
+        for cluster_id, group in clusters.groupby("cluster", sort=True)
+    }
+    palette = (
+        px.colors.qualitative.Plotly
+        + px.colors.qualitative.Safe
+        + px.colors.qualitative.Bold
+    )
+
+    finite_distances = distances.to_numpy(dtype=float)
+    finite_distances = finite_distances[
+        pd.notna(finite_distances) & (finite_distances > 0)
+    ]
+    typical_distance = (
+        float(pd.Series(finite_distances).median())
+        if finite_distances.size
+        else 1.0
+    )
+    group_radius = min(0.22, max(0.055, typical_distance * 0.13))
+
+    metadata_lookup = (
+        metadata.drop_duplicates("symbol").set_index("symbol").to_dict("index")
+        if not metadata.empty and "symbol" in metadata.columns
+        else {}
+    )
+    node_positions: dict[object, list[dict]] = {}
+    for cluster_id, group in clusters.groupby("cluster", sort=True):
+        members = sorted(group["symbol"].astype(str).tolist())
+        center = centers[cluster_id]
+        positions = []
+        for index, symbol in enumerate(members):
+            if len(members) == 1:
+                offset_x = offset_y = offset_z = 0.0
+            elif dimensions == 3:
+                offset_z = group_radius * (
+                    (2.0 * index / (len(members) - 1)) - 1.0
+                ) * 0.7
+                planar_radius = math.sqrt(
+                    max(group_radius ** 2 - offset_z ** 2, 0.0)
+                )
+                angle = index * math.pi * (3.0 - math.sqrt(5.0))
+                offset_x = planar_radius * math.cos(angle)
+                offset_y = planar_radius * math.sin(angle)
+            else:
+                angle = 2.0 * math.pi * index / len(members)
+                offset_x = group_radius * math.cos(angle)
+                offset_y = group_radius * math.sin(angle)
+                offset_z = 0.0
+            positions.append(
+                {
+                    "symbol": symbol,
+                    "x": center["x"] + offset_x,
+                    "y": center["y"] + offset_y,
+                    "z": center["z"] + offset_z,
+                }
+            )
+        node_positions[cluster_id] = positions
+
+    figure = go.Figure()
+    scatter_type = go.Scatter3d if dimensions == 3 else go.Scatter
+
+    for edge in edges.itertuples(index=False):
+        left = centers[edge.cluster_a]
+        right = centers[edge.cluster_b]
+        left_members = members_by_cluster[edge.cluster_a]
+        right_members = members_by_cluster[edge.cluster_b]
+        return_values = (
+            return_correlation.reindex(
+                index=left_members,
+                columns=right_members,
+            ).stack().dropna()
+            if return_correlation is not None and not return_correlation.empty
+            else pd.Series(dtype=float)
+        )
+        fundamental_values = (
+            fundamental_similarity.reindex(
+                index=left_members,
+                columns=right_members,
+            ).stack().dropna()
+            if fundamental_similarity is not None
+            and not fundamental_similarity.empty
+            else pd.Series(dtype=float)
+        )
+        hover = (
+            f"Cluster {edge.cluster_a} ↔ Cluster {edge.cluster_b}"
+            f"<br>Blended similarity: {edge.correlation:.2f}"
+            f"<br>Exact distance: {edge.distance:.2f}"
+            + (
+                f"<br>Return correlation: {return_values.mean():.2f}"
+                if not return_values.empty
+                else ""
+            )
+            + (
+                f"<br>Fundamental similarity: {fundamental_values.mean():.2f}"
+                if not fundamental_values.empty
+                else ""
+            )
+        )
+        coordinates = {
+            "x": [left["x"], right["x"]],
+            "y": [left["y"], right["y"]],
+        }
+        if dimensions == 3:
+            coordinates["z"] = [left["z"], right["z"]]
+        figure.add_trace(
+            scatter_type(
+                **coordinates,
+                mode="lines",
+                line={"color": "rgba(120,120,120,0.55)", "width": 3},
+                text=[hover, hover],
+                hovertemplate="%{text}<extra></extra>",
+                showlegend=False,
+            )
+        )
+
+    for cluster_index, cluster_id in enumerate(cluster_ids):
+        color = palette[cluster_index % len(palette)]
+        center = centers[cluster_id]
+        positions = node_positions.get(cluster_id, [])
+
+        spoke_x: list[float | None] = []
+        spoke_y: list[float | None] = []
+        spoke_z: list[float | None] = []
+        for node in positions:
+            spoke_x.extend([center["x"], node["x"], None])
+            spoke_y.extend([center["y"], node["y"], None])
+            spoke_z.extend([center["z"], node["z"], None])
+        spoke_coordinates = {"x": spoke_x, "y": spoke_y}
+        if dimensions == 3:
+            spoke_coordinates["z"] = spoke_z
+        figure.add_trace(
+            scatter_type(
+                **spoke_coordinates,
+                mode="lines",
+                line={"color": color, "width": 1},
+                opacity=0.35,
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+        hover_text = []
+        for node in positions:
+            details = metadata_lookup.get(node["symbol"], {})
+            hover_text.append(
+                f"<b>{node['symbol']}</b>"
+                f"<br>{details.get('name', '')}"
+                f"<br>Cluster {cluster_id}"
+                f"<br>Sector: {details.get('sector', 'Unknown') or 'Unknown'}"
+                f"<br>Country: {details.get('country', 'Unknown') or 'Unknown'}"
+            )
+        node_coordinates = {
+            "x": [node["x"] for node in positions],
+            "y": [node["y"] for node in positions],
+        }
+        if dimensions == 3:
+            node_coordinates["z"] = [node["z"] for node in positions]
+        figure.add_trace(
+            scatter_type(
+                **node_coordinates,
+                mode="markers",
+                name=f"Cluster {cluster_id}",
+                marker={
+                    "size": 9 if dimensions == 3 else 12,
+                    "color": color,
+                    "line": {"color": "white", "width": 1},
+                },
+                text=hover_text,
+                hovertemplate="%{text}<extra></extra>",
+                showlegend=len(cluster_ids) <= 14,
+            )
+        )
+
+    center_coordinates = {
+        "x": [centers[cluster_id]["x"] for cluster_id in cluster_ids],
+        "y": [centers[cluster_id]["y"] for cluster_id in cluster_ids],
+    }
+    if dimensions == 3:
+        center_coordinates["z"] = [
+            centers[cluster_id]["z"] for cluster_id in cluster_ids
+        ]
+    figure.add_trace(
+        scatter_type(
+            **center_coordinates,
+            mode="markers+text",
+            marker={
+                "size": 16 if dimensions == 3 else 22,
+                "color": "rgba(30,30,30,0.18)",
+                "symbol": "diamond",
+                "line": {"color": "rgba(30,30,30,0.65)", "width": 2},
+            },
+            text=[f"C{cluster_id}" for cluster_id in cluster_ids],
+            textposition="top center",
+            hovertemplate="Cluster %{text}<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    common_layout = {
+        "height": 720,
+        "margin": {"l": 10, "r": 10, "t": 30, "b": 10},
+        "hovermode": "closest",
+        "legend": {"orientation": "h", "y": -0.05},
+    }
+    if dimensions == 3:
+        common_layout["scene"] = {
+            "xaxis": {"visible": False},
+            "yaxis": {"visible": False},
+            "zaxis": {"visible": False},
+            "aspectmode": "data",
+        }
+    else:
+        common_layout.update(
+            {
+                "xaxis": {"visible": False},
+                "yaxis": {
+                    "visible": False,
+                    "scaleanchor": "x",
+                    "scaleratio": 1,
+                },
+            }
+        )
+    figure.update_layout(**common_layout)
+    return figure
 
 
 st.set_page_config(page_title="Investing Workbench", layout="wide")
@@ -995,6 +1348,7 @@ def refresh_postgresql_cache() -> None:
     load_stock_news.clear()
     load_statement_trends.clear()
     load_saved_analysis_for_rows.clear()
+    load_all_saved_analysis.clear()
 
 
 refresh_postgresql_cache()
@@ -1028,7 +1382,40 @@ with st.sidebar:
         format="%.2f",
     )
     max_volatility = max_volatility_percent / 100
-    min_correlation = st.slider("Cluster correlation", min_value=-1.0, max_value=1.0, value=0.65, step=0.05)
+    min_correlation = st.slider(
+        "Cluster similarity threshold",
+        min_value=-1.0,
+        max_value=1.0,
+        value=0.55,
+        step=0.05,
+        help=(
+            "Minimum blended similarity for the first grouping pass. The score "
+            "combines return movement, realized performance, and fundamentals."
+        ),
+    )
+    fundamental_weight = st.slider(
+        "Fundamental influence",
+        min_value=0.0,
+        max_value=0.5,
+        value=0.25,
+        step=0.05,
+        format="%.2f",
+        help=(
+            "Share of the clustering score assigned to essential fundamentals. "
+            "The remaining score focuses on return co-movement and performance."
+        ),
+    )
+    max_clusters = st.slider(
+        "Maximum clusters",
+        min_value=4,
+        max_value=30,
+        value=12,
+        step=1,
+        help=(
+            "If the similarity threshold produces more groups, the most "
+            "similar groups are merged until this limit is reached."
+        ),
+    )
 
     if st.button("Refresh Universe", width="stretch"):
         with st.spinner("Refreshing stock universe"):
@@ -1077,6 +1464,38 @@ universe = filter_universe_by_search(universe, stock_search)
 analyze_all = st.checkbox("Use all filtered stocks", value=False)
 
 sector_metadata = load_sector_metadata_for_rows(universe)
+with st.sidebar:
+    dividend_filter = st.segmented_control(
+        "Dividend status",
+        ["All", "Dividend payers", "Non-dividend payers", "Unknown"],
+        default="All",
+        required=True,
+        key="dividend_status_filter",
+        help="Dividend status comes from the latest saved fundamental analysis.",
+    )
+if dividend_filter != "All":
+    requested_status = {
+        "Dividend payers": "Dividend payer",
+        "Non-dividend payers": "Non-dividend payer",
+        "Unknown": "Unknown",
+    }[dividend_filter]
+    matching_metadata = sector_metadata[
+        sector_metadata["dividend_status"] == requested_status
+    ]
+    matching_keys = {
+        (row.symbol, row.country)
+        for row in matching_metadata[["symbol", "country"]].itertuples(index=False)
+    }
+    normalized_symbols = universe["symbol"].fillna("").astype(str).str.upper()
+    normalized_countries = universe["country"].fillna("").astype(str).str.lower()
+    universe = universe[
+        [
+            (symbol, country) in matching_keys
+            for symbol, country in zip(normalized_symbols, normalized_countries)
+        ]
+    ]
+    sector_metadata = matching_metadata
+
 sector_options = sorted(
     sector
     for sector in sector_metadata["sector"].dropna().astype(str).unique().tolist()
@@ -1513,6 +1932,137 @@ with tab_spider:
                 )
 
 with tab_rankings:
+    with st.container(border=True):
+        st.subheader("Dividend buy candidates by country")
+        st.caption(
+            "Screens the latest analyses stored in PostgreSQL and returns up to "
+            "10 stocks per country. Annual dividend yield must be at least 3%; "
+            "eligible stocks are ordered by the existing ranking model "
+            "(35% technical, 65% fundamental). This is a transparent screening "
+            "result, not personalized investment advice."
+        )
+        if st.button(
+            "Build 3% dividend recommendations",
+            type="primary",
+            key="build_dividend_recommendations",
+        ):
+            with st.spinner("Ranking saved dividend stocks"):
+                database_results = load_all_saved_analysis()
+                database_rankings = build_rankings(
+                    database_results,
+                    technical_weight=0.35,
+                    group_by="country",
+                )
+                st.session_state["dividend_recommendations"] = (
+                    top_dividend_recommendations_by_country(
+                        database_rankings,
+                        min_dividend_yield=0.03,
+                        limit=10,
+                    )
+                )
+
+        dividend_recommendations = st.session_state.get(
+            "dividend_recommendations"
+        )
+        if (
+            isinstance(dividend_recommendations, pd.DataFrame)
+            and not dividend_recommendations.empty
+        ):
+            recommendation_countries = ["All countries"] + sorted(
+                dividend_recommendations["country"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            selected_recommendation_country = st.selectbox(
+                "Recommendation country",
+                recommendation_countries,
+                key="dividend_recommendation_country",
+            )
+            displayed_recommendations = dividend_recommendations
+            if selected_recommendation_country != "All countries":
+                displayed_recommendations = dividend_recommendations[
+                    dividend_recommendations["country"]
+                    == selected_recommendation_country
+                ]
+            recommendation_columns = [
+                "country",
+                "country_recommendation_rank",
+                "symbol",
+                "name",
+                "sector",
+                "annual_dividend_yield",
+                "ranking_score",
+                "technical_score",
+                "fundamental_score",
+                "fundamental_coverage",
+                "recommended",
+                "pe_ratio",
+                "price_to_book",
+                "return_on_equity",
+                "debt_to_equity",
+                "payout_ratio",
+                "dividend_years_paid",
+                "consecutive_dividend_years",
+                "recommendation_basis",
+            ]
+            available_recommendation_columns = [
+                column
+                for column in recommendation_columns
+                if column in displayed_recommendations.columns
+            ]
+            st.dataframe(
+                displayed_recommendations[available_recommendation_columns],
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "country": st.column_config.TextColumn(
+                        "Country", pinned=True
+                    ),
+                    "country_recommendation_rank": st.column_config.NumberColumn(
+                        "Country rank", format="%d"
+                    ),
+                    "symbol": st.column_config.TextColumn(
+                        "Symbol", pinned=True
+                    ),
+                    "annual_dividend_yield": st.column_config.NumberColumn(
+                        "Annual dividend yield", format="percent"
+                    ),
+                    "ranking_score": st.column_config.NumberColumn(
+                        "Ranking score", format="%.1f"
+                    ),
+                    "technical_score": st.column_config.NumberColumn(
+                        "Technical score", format="%.1f"
+                    ),
+                    "fundamental_score": st.column_config.NumberColumn(
+                        "Fundamental score", format="%.1f"
+                    ),
+                    "fundamental_coverage": st.column_config.NumberColumn(
+                        "Fundamental coverage", format="%.1f%%"
+                    ),
+                    "pe_ratio": st.column_config.NumberColumn(
+                        "P/E", format="%.2f"
+                    ),
+                    "price_to_book": st.column_config.NumberColumn(
+                        "Price/book", format="%.2f"
+                    ),
+                    "return_on_equity": st.column_config.NumberColumn(
+                        "ROE", format="percent"
+                    ),
+                    "payout_ratio": st.column_config.NumberColumn(
+                        "Payout ratio", format="percent"
+                    ),
+                    "recommendation_basis": st.column_config.TextColumn(
+                        "Screening basis", width="large"
+                    ),
+                },
+            )
+        elif isinstance(dividend_recommendations, pd.DataFrame):
+            st.warning(
+                "No saved stocks currently meet the 3% annual dividend minimum."
+            )
+
     all_results = st.session_state.get("analysis_results", [])
     filtered_results = st.session_state.get("filtered_analysis_results")
     results = all_results
@@ -1563,11 +2113,13 @@ with tab_rankings:
             cluster_map: dict[str, str] = {}
             if group_by == "correlation_cluster":
                 ranking_universe = rows_from_results(results)
-                with st.spinner("Building correlation groups"):
+                with st.spinner("Building stock groups"):
                     cluster_map, cluster_result = build_correlation_groups(
                         ranking_universe,
                         days=int(days),
                         min_correlation=float(min_correlation),
+                        max_clusters=int(max_clusters),
+                        fundamental_weight=float(fundamental_weight),
                     )
                     st.session_state["cluster_result"] = cluster_result
 
@@ -1706,7 +2258,7 @@ with tab_clusters:
     if run_clusters:
         symbol_list = active_rows["symbol"].dropna().astype(str).tolist()
         country_map = dict(zip(active_rows["symbol"], active_rows["country"]))
-        with st.spinner("Building correlation matrix"):
+        with st.spinner("Loading stored prices and building cluster map"):
             stocks = tuple(
                 (symbol, str(country_map.get(symbol, "norway")))
                 for symbol in symbol_list
@@ -1715,33 +2267,212 @@ with tab_clusters:
                 stocks,
                 int(days),
             )
-            correlation = compute_return_correlation(price_matrix)
-            clusters = cluster_by_correlation(correlation, min_correlation=float(min_correlation))
-            pairs = correlation_pairs(correlation) if not correlation.empty else pd.DataFrame()
+            cluster_metadata = enrich_cluster_metadata(active_rows, sector_metadata)
+            components = build_stock_similarity(
+                price_matrix,
+                cluster_metadata,
+                fundamental_weight=float(fundamental_weight),
+            )
+            similarity = components["similarity"]
+            clusters = cluster_by_correlation(
+                similarity,
+                min_correlation=float(min_correlation),
+                max_clusters=int(max_clusters),
+            )
+            pairs = (
+                correlation_pairs(components["return_correlation"])
+                if not components["return_correlation"].empty
+                else pd.DataFrame()
+            )
         st.session_state["cluster_result"] = {
             "prices": price_matrix,
-            "correlation": correlation,
+            "correlation": similarity,
+            "similarity": similarity,
+            **components,
             "clusters": clusters,
             "pairs": pairs,
             "errors": errors,
+            "metadata": cluster_metadata,
+            "max_clusters": int(max_clusters),
+            "fundamental_weight": float(fundamental_weight),
         }
 
     cluster_result = st.session_state.get("cluster_result")
     if cluster_result:
         clusters = cluster_result["clusters"]
         correlation = cluster_result["correlation"]
+        return_correlation = cluster_result.get(
+            "return_correlation",
+            correlation,
+        )
+        fundamental_similarity_matrix = cluster_result.get(
+            "fundamental_similarity",
+            pd.DataFrame(),
+        )
+        applied_fundamental_weight = float(
+            cluster_result.get("fundamental_weight", 0.25)
+        )
         pairs = cluster_result["pairs"]
         errors = cluster_result["errors"]
+        metadata = cluster_result.get("metadata", pd.DataFrame())
 
-        st.dataframe(round_numeric_frame(clusters), width="stretch", hide_index=True)
-        if not correlation.empty:
-            fig = px.imshow(correlation, color_continuous_scale="RdBu", zmin=-1, zmax=1, aspect="auto")
-            fig.update_layout(height=620, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(fig, width="stretch")
-        if not pairs.empty:
-            left, right = st.columns(2)
-            left.dataframe(round_numeric_frame(pairs.head(20)), width="stretch", hide_index=True)
-            right.dataframe(round_numeric_frame(pairs.sort_values("correlation").head(20)), width="stretch", hide_index=True)
+        if not correlation.empty and not clusters.empty:
+            cluster_count = int(clusters["cluster"].nunique())
+            st.caption(
+                f"Created {cluster_count} clusters from the selected stocks "
+                f"(configured maximum: {cluster_result.get('max_clusters', 12)})."
+            )
+            controls = st.container(horizontal=True, vertical_alignment="bottom")
+            with controls:
+                diagram_type = st.segmented_control(
+                    "Diagram type",
+                    ["2D", "3D"],
+                    default="2D",
+                    required=True,
+                    key="cluster_diagram_type",
+                    help="The 3D view can be rotated and zoomed.",
+                )
+                max_links = max(1, min(4, cluster_count - 1))
+                links_per_cluster = st.slider(
+                    "Nearest links per cluster",
+                    min_value=1,
+                    max_value=max_links,
+                    value=min(2, max_links),
+                    disabled=cluster_count < 2,
+                    help="Limits connecting lines so the diagram remains readable.",
+                )
+
+            with st.container(border=True):
+                st.subheader("Cluster distance map")
+                figure = build_cluster_map_figure(
+                    correlation,
+                    clusters,
+                    metadata,
+                    dimensions=3 if diagram_type == "3D" else 2,
+                    links_per_cluster=int(links_per_cluster),
+                    return_correlation=return_correlation,
+                    fundamental_similarity=fundamental_similarity_matrix,
+                )
+                st.plotly_chart(
+                    figure,
+                    width="stretch",
+                    key=f"cluster_map_{diagram_type}",
+                    config={"scrollZoom": True, "displaylogo": False},
+                )
+                st.caption(
+                    "**How to read distance:** distance = 1 − blended similarity. "
+                    f"This run uses {(1 - applied_fundamental_weight) * 80:.0f}% "
+                    "return co-movement, "
+                    f"{(1 - applied_fundamental_weight) * 20:.0f}% realized "
+                    "return/risk profile, and "
+                    f"{applied_fundamental_weight * 100:.0f}% essential fundamentals. A short "
+                    "line means similar movement, performance, and fundamentals. "
+                    "A long line means opposing movement and/or substantially "
+                    "different profiles. The 2D/3D position is approximate; use "
+                    "the exact table components for comparison."
+                )
+
+            relationships = cluster_relationship_summary(
+                correlation,
+                clusters,
+                metadata=metadata,
+                return_correlation=return_correlation,
+                fundamental_similarity=fundamental_similarity_matrix,
+            )
+            with st.container(border=True):
+                st.subheader("Cluster relationships and interpretation")
+                st.dataframe(
+                    relationships,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "cluster": st.column_config.TextColumn("Cluster", pinned=True),
+                        "stock_count": st.column_config.NumberColumn("Stocks", format="%d"),
+                        "within_similarity": st.column_config.NumberColumn(
+                            "Within similarity", format="%.2f"
+                        ),
+                        "nearest_similarity": st.column_config.NumberColumn(
+                            "Nearest similarity", format="%.2f"
+                        ),
+                        "nearest_distance": st.column_config.NumberColumn(
+                            "Nearest distance", format="%.2f"
+                        ),
+                        "nearest_return_correlation": st.column_config.NumberColumn(
+                            "Nearest return correlation", format="%.2f"
+                        ),
+                        "nearest_fundamental_similarity": st.column_config.NumberColumn(
+                            "Nearest fundamental similarity", format="%.2f"
+                        ),
+                        "farthest_similarity": st.column_config.NumberColumn(
+                            "Farthest similarity", format="%.2f"
+                        ),
+                        "farthest_distance": st.column_config.NumberColumn(
+                            "Farthest distance", format="%.2f"
+                        ),
+                        "farthest_return_correlation": st.column_config.NumberColumn(
+                            "Farthest return correlation", format="%.2f"
+                        ),
+                        "farthest_fundamental_similarity": st.column_config.NumberColumn(
+                            "Farthest fundamental similarity", format="%.2f"
+                        ),
+                        "interpretation": st.column_config.TextColumn(
+                            "Interpretation", width="large"
+                        ),
+                    },
+                )
+
+            cluster_options = relationships["cluster"].tolist()
+            selected_portfolio_clusters = st.multiselect(
+                "Compare stocks from several clusters",
+                cluster_options,
+                default=cluster_options[: min(3, len(cluster_options))],
+                help=(
+                    "Use this as a diversification shortlist, not as a complete "
+                    "portfolio recommendation."
+                ),
+            )
+            if selected_portfolio_clusters:
+                member_table = clusters[["cluster", "symbol"]].copy()
+                member_table["cluster"] = member_table["cluster"].map(
+                    lambda value: f"Cluster {value}"
+                )
+                if not metadata.empty and "symbol" in metadata.columns:
+                    detail_columns = [
+                        column
+                        for column in ["symbol", "name", "country", "sector", "industry"]
+                        if column in metadata.columns
+                    ]
+                    member_table = member_table.merge(
+                        metadata[detail_columns].drop_duplicates("symbol"),
+                        on="symbol",
+                        how="left",
+                    )
+                member_table = member_table[
+                    member_table["cluster"].isin(selected_portfolio_clusters)
+                ].sort_values(["cluster", "symbol"])
+                st.dataframe(member_table, width="stretch", hide_index=True)
+
+            with st.expander("Exact stock-pair correlations"):
+                if pairs.empty:
+                    st.info("No pairwise correlations are available.")
+                else:
+                    pair_left, pair_right = st.columns(2)
+                    pair_left.caption("Most similar stock pairs")
+                    pair_left.dataframe(
+                        round_numeric_frame(pairs.head(20)),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                    pair_right.caption("Least similar stock pairs")
+                    pair_right.dataframe(
+                        round_numeric_frame(
+                            pairs.sort_values("correlation").head(20)
+                        ),
+                        width="stretch",
+                        hide_index=True,
+                    )
+        elif not errors:
+            st.info("At least two stored price series are needed to build a cluster map.")
         if errors:
             st.caption(
                 "Stocks listed below do not yet have stored prices for the "

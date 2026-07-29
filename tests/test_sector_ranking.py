@@ -11,6 +11,7 @@ from investing.core.ranking import (
     build_rankings,
     build_sector_fundamental_score,
     normalize_sector,
+    top_dividend_recommendations_by_country,
     top_stocks_by_country_sector,
 )
 
@@ -119,6 +120,70 @@ class SectorFundamentalScoreTests(unittest.TestCase):
         self.assertEqual(norway_energy["country_sector_rank"].tolist(), [1, 2, 3, 4, 5])
         self.assertIn("US1", top["symbol"].tolist())
         self.assertIn("NO-T", top["symbol"].tolist())
+
+    def test_dividend_recommendations_require_three_percent_and_limit_country(self) -> None:
+        rankings = pd.DataFrame(
+            [
+                {
+                    "symbol": f"NO{i:02d}",
+                    "country": "norway",
+                    "ranking_score": 100 - i,
+                    "dividend_yield": 0.03 + i / 1000,
+                }
+                for i in range(12)
+            ]
+            + [
+                {
+                    "symbol": "NO-LOW",
+                    "country": "norway",
+                    "ranking_score": 999,
+                    "dividend_yield": 0.029,
+                },
+                {
+                    "symbol": "SE-GOOD",
+                    "country": "sweden",
+                    "ranking_score": 75,
+                    "dividend_yield": "3.5%",
+                },
+            ]
+        )
+
+        recommendations = top_dividend_recommendations_by_country(
+            rankings,
+            min_dividend_yield=0.03,
+            limit=10,
+        )
+
+        norway = recommendations[recommendations["country"] == "norway"]
+        self.assertEqual(len(norway), 10)
+        self.assertNotIn("NO-LOW", recommendations["symbol"].tolist())
+        self.assertIn("SE-GOOD", recommendations["symbol"].tolist())
+        self.assertTrue(
+            (recommendations["annual_dividend_yield"] >= 0.03).all()
+        )
+        self.assertEqual(
+            norway["country_recommendation_rank"].tolist(),
+            list(range(1, 11)),
+        )
+
+    def test_dividend_recommendations_accept_percentage_point_imports(self) -> None:
+        rankings = pd.DataFrame(
+            [
+                {
+                    "symbol": "PCT",
+                    "country": "norway",
+                    "ranking_score": 80,
+                    "dividend_yield": 3.2,
+                }
+            ]
+        )
+
+        recommendations = top_dividend_recommendations_by_country(rankings)
+
+        self.assertAlmostEqual(
+            recommendations.iloc[0]["annual_dividend_yield"],
+            0.032,
+        )
 
 
 if __name__ == "__main__":

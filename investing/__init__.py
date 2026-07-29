@@ -29,14 +29,22 @@ from .db.store import (
 from .core.html_report import generate_watchlist_report
 from .core.clustering import (
     build_close_price_matrix,
+    build_stock_similarity,
     cluster_by_correlation,
+    cluster_distance_matrix,
+    cluster_network_layout,
+    cluster_relationship_summary,
     compute_return_correlation,
+    compute_performance_similarity,
+    compute_fundamental_similarity,
     correlation_pairs,
+    nearest_cluster_edges,
 )
 from .core.ranking import (
     build_rankings,
     build_sector_fundamental_score,
     sector_profile_frame,
+    top_dividend_recommendations_by_country,
     top_stocks_by_country_sector,
 )
 from .core.portfolio import analyze_stock, analyze_stocks
@@ -81,12 +89,20 @@ __all__ = [
     "write_watchlist",
     "generate_watchlist_report",
     "build_close_price_matrix",
+    "build_stock_similarity",
     "compute_return_correlation",
+    "compute_performance_similarity",
+    "compute_fundamental_similarity",
     "cluster_by_correlation",
+    "cluster_distance_matrix",
+    "cluster_network_layout",
+    "cluster_relationship_summary",
     "correlation_pairs",
+    "nearest_cluster_edges",
     "build_rankings",
     "build_sector_fundamental_score",
     "sector_profile_frame",
+    "top_dividend_recommendations_by_country",
     "top_stocks_by_country_sector",
     "compute_stock_metrics",
     "build_scorecard",

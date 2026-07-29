@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-RANKING_API_VERSION = 3
+RANKING_API_VERSION = 4
 
 
 def parse_number(value: Any) -> float | None:
@@ -628,3 +628,74 @@ def top_stocks_by_country_sector(rankings: pd.DataFrame, limit: int = 5) -> pd.D
         ["country", "sector"], sort=False
     ).cumcount() + 1
     return ranked[ranked["country_sector_rank"] <= limit].reset_index(drop=True)
+
+
+def top_dividend_recommendations_by_country(
+    rankings: pd.DataFrame,
+    *,
+    min_dividend_yield: float = 0.03,
+    limit: int = 10,
+) -> pd.DataFrame:
+    """Screen and rank dividend candidates within every country."""
+    required = {"country", "ranking_score", "dividend_yield"}
+    missing = required.difference(rankings.columns)
+    if missing:
+        raise ValueError(
+            f"Rankings are missing required columns: {', '.join(sorted(missing))}"
+        )
+    if not 0 <= min_dividend_yield <= 1:
+        raise ValueError("min_dividend_yield must be between 0 and 1")
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if rankings.empty:
+        return rankings.copy().assign(
+            country_recommendation_rank=pd.Series(dtype="int64"),
+            recommendation_basis=pd.Series(dtype="string"),
+        )
+
+    candidates = rankings.copy()
+    candidates["annual_dividend_yield"] = candidates["dividend_yield"].map(
+        parse_number
+    )
+    # Be tolerant of imported percentage-point values such as 3.5 for 3.5%.
+    percentage_points = candidates["annual_dividend_yield"] > 1
+    candidates.loc[percentage_points, "annual_dividend_yield"] /= 100.0
+    candidates = candidates[
+        candidates["annual_dividend_yield"].notna()
+        & (candidates["annual_dividend_yield"] >= min_dividend_yield)
+        & pd.to_numeric(candidates["ranking_score"], errors="coerce").notna()
+    ].copy()
+    if candidates.empty:
+        return candidates.assign(
+            country_recommendation_rank=pd.Series(dtype="int64"),
+            recommendation_basis=pd.Series(dtype="string"),
+        )
+
+    candidates["country"] = (
+        candidates["country"].fillna("Unknown").astype(str).str.strip()
+    )
+    candidates.loc[candidates["country"].eq(""), "country"] = "Unknown"
+    sort_columns = ["country", "ranking_score", "annual_dividend_yield"]
+    ascending = [True, False, False]
+    if "symbol" in candidates.columns:
+        sort_columns.append("symbol")
+        ascending.append(True)
+    candidates = candidates.sort_values(
+        sort_columns,
+        ascending=ascending,
+        na_position="last",
+    )
+    candidates["country_recommendation_rank"] = (
+        candidates.groupby("country", sort=False).cumcount() + 1
+    )
+    candidates = candidates[
+        candidates["country_recommendation_rank"] <= limit
+    ].copy()
+    candidates["recommendation_basis"] = candidates.apply(
+        lambda row: (
+            f"Dividend yield {row['annual_dividend_yield']:.1%}; "
+            f"existing ranking score {row['ranking_score']:.1f}"
+        ),
+        axis=1,
+    )
+    return candidates.reset_index(drop=True)
