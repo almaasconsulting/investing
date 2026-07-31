@@ -21,7 +21,9 @@ from investing.core.clustering import (
     correlation_pairs,
     nearest_cluster_edges,
 )
+from investing.core.cluster_optimizer import optimize_stock_clusters
 from investing.core.html_report import generate_watchlist_report
+from investing.core.news_sentiment import summarize_stock_news
 import investing.core.ranking as ranking_module
 
 # Streamlit can retain imported application modules across source hot reloads.
@@ -63,6 +65,7 @@ from investing.db.store import (
     init_db,
     query_financial_statement_trends,
     query_latest_analysis_snapshots,
+    query_stock_news_bulk,
     query_stock_news,
     query_stock_universe,
 )
@@ -887,6 +890,17 @@ def load_all_saved_analysis() -> list[dict]:
     return query_latest_analysis_snapshots(include_history=False)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_recommendation_news(
+    stocks: tuple[tuple[str, str], ...],
+) -> pd.DataFrame:
+    return query_stock_news_bulk(
+        stocks,
+        limit_per_stock=10,
+        lookback_days=90,
+    )
+
+
 def load_sector_metadata_for_rows(universe: pd.DataFrame) -> pd.DataFrame:
     if universe.empty:
         return pd.DataFrame(
@@ -1349,6 +1363,7 @@ def refresh_postgresql_cache() -> None:
     load_statement_trends.clear()
     load_saved_analysis_for_rows.clear()
     load_all_saved_analysis.clear()
+    load_recommendation_news.clear()
 
 
 refresh_postgresql_cache()
@@ -1953,11 +1968,24 @@ with tab_rankings:
                     technical_weight=0.35,
                     group_by="country",
                 )
+                recommendations = top_dividend_recommendations_by_country(
+                    database_rankings,
+                    min_dividend_yield=0.03,
+                    limit=10,
+                )
+                recommendation_stocks = tuple(
+                    recommendations[["symbol", "country"]].itertuples(
+                        index=False,
+                        name=None,
+                    )
+                )
+                recommendation_news = load_recommendation_news(
+                    recommendation_stocks
+                )
                 st.session_state["dividend_recommendations"] = (
-                    top_dividend_recommendations_by_country(
-                        database_rankings,
-                        min_dividend_yield=0.03,
-                        limit=10,
+                    summarize_stock_news(
+                        recommendation_news,
+                        recommendations,
                     )
                 )
 
@@ -1986,6 +2014,28 @@ with tab_rankings:
                     dividend_recommendations["country"]
                     == selected_recommendation_country
                 ]
+            sentiment_options = ["All sentiment"] + [
+                value
+                for value in [
+                    "Positive",
+                    "Negative",
+                    "Mixed",
+                    "Neutral",
+                    "Unavailable",
+                ]
+                if value
+                in displayed_recommendations["news_sentiment"].unique()
+            ]
+            selected_news_sentiment = st.selectbox(
+                "Recent news sentiment",
+                sentiment_options,
+                key="dividend_recommendation_news_sentiment",
+            )
+            if selected_news_sentiment != "All sentiment":
+                displayed_recommendations = displayed_recommendations[
+                    displayed_recommendations["news_sentiment"]
+                    == selected_news_sentiment
+                ]
             recommendation_columns = [
                 "country",
                 "country_recommendation_rank",
@@ -2005,6 +2055,15 @@ with tab_rankings:
                 "payout_ratio",
                 "dividend_years_paid",
                 "consecutive_dividend_years",
+                "news_sentiment",
+                "news_sentiment_score",
+                "news_articles",
+                "positive_articles",
+                "negative_articles",
+                "latest_news_at",
+                "latest_news_title",
+                "latest_news_url",
+                "news_sentiment_basis",
                 "recommendation_basis",
             ]
             available_recommendation_columns = [
@@ -2056,7 +2115,40 @@ with tab_rankings:
                     "recommendation_basis": st.column_config.TextColumn(
                         "Screening basis", width="large"
                     ),
+                    "news_sentiment": st.column_config.TextColumn(
+                        "90-day news sentiment"
+                    ),
+                    "news_sentiment_score": st.column_config.NumberColumn(
+                        "News score", format="%.2f"
+                    ),
+                    "news_articles": st.column_config.NumberColumn(
+                        "News articles", format="%d"
+                    ),
+                    "positive_articles": st.column_config.NumberColumn(
+                        "Positive", format="%d"
+                    ),
+                    "negative_articles": st.column_config.NumberColumn(
+                        "Negative", format="%d"
+                    ),
+                    "latest_news_at": st.column_config.DatetimeColumn(
+                        "Latest news", format="YYYY-MM-DD"
+                    ),
+                    "latest_news_url": st.column_config.LinkColumn(
+                        "Article link", display_text="Open"
+                    ),
+                    "latest_news_title": st.column_config.TextColumn(
+                        "Latest headline", width="large"
+                    ),
+                    "news_sentiment_basis": st.column_config.TextColumn(
+                        "News basis", width="large"
+                    ),
                 },
+            )
+            st.caption(
+                "News labels use a deterministic finance-word classifier over "
+                "the latest 10 stored articles from the last 90 days. They are "
+                "informational, can miss context or sarcasm, and do not alter "
+                "the ranking score."
             )
         elif isinstance(dividend_recommendations, pd.DataFrame):
             st.warning(
@@ -2254,7 +2346,21 @@ with tab_clusters:
         "Clustering uses price history already stored by Dagster in PostgreSQL; "
         "it does not contact market-data providers."
     )
-    run_clusters = st.button("Run Clustering", type="primary", disabled=active_rows.empty)
+    cluster_actions = st.container(horizontal=True)
+    with cluster_actions:
+        run_clusters = st.button(
+            "Run Clustering",
+            type="primary",
+            disabled=active_rows.empty,
+        )
+        tune_clusters = st.button(
+            "Auto-tune Clustering",
+            disabled=active_rows.empty,
+            help=(
+                "Tests cluster counts and feature weights on older stored data, "
+                "then scores them on the newest 30% of stored dates."
+            ),
+        )
     if run_clusters:
         symbol_list = active_rows["symbol"].dropna().astype(str).tolist()
         country_map = dict(zip(active_rows["symbol"], active_rows["country"]))
@@ -2295,7 +2401,57 @@ with tab_clusters:
             "metadata": cluster_metadata,
             "max_clusters": int(max_clusters),
             "fundamental_weight": float(fundamental_weight),
+            "performance_weight": 0.20,
         }
+
+    if tune_clusters:
+        symbol_list = active_rows["symbol"].dropna().astype(str).tolist()
+        country_map = dict(zip(active_rows["symbol"], active_rows["country"]))
+        with st.spinner(
+            "Testing cluster counts and parameters on stored train/validation data"
+        ):
+            stocks = tuple(
+                (symbol, str(country_map.get(symbol, "norway")))
+                for symbol in symbol_list
+            )
+            price_matrix, errors = load_clustering_price_matrix(
+                stocks,
+                int(days),
+            )
+            cluster_metadata = enrich_cluster_metadata(
+                active_rows,
+                sector_metadata,
+            )
+            try:
+                optimization = optimize_stock_clusters(
+                    price_matrix,
+                    cluster_metadata,
+                )
+            except ValueError as exc:
+                optimization = None
+                st.error(str(exc))
+        if optimization is not None:
+            components = optimization["components"]
+            similarity = components["similarity"]
+            best = optimization["best"]
+            st.session_state["cluster_result"] = {
+                "prices": price_matrix,
+                "correlation": similarity,
+                "similarity": similarity,
+                **components,
+                "clusters": optimization["clusters"],
+                "pairs": (
+                    correlation_pairs(components["return_correlation"])
+                    if not components["return_correlation"].empty
+                    else pd.DataFrame()
+                ),
+                "errors": errors,
+                "metadata": cluster_metadata,
+                "max_clusters": int(best["cluster_count"]),
+                "fundamental_weight": float(best["fundamental_weight"]),
+                "performance_weight": float(best["performance_weight"]),
+                "optimization": optimization,
+            }
 
     cluster_result = st.session_state.get("cluster_result")
     if cluster_result:
@@ -2312,12 +2468,68 @@ with tab_clusters:
         applied_fundamental_weight = float(
             cluster_result.get("fundamental_weight", 0.25)
         )
+        applied_performance_weight = float(
+            cluster_result.get("performance_weight", 0.20)
+        )
         pairs = cluster_result["pairs"]
         errors = cluster_result["errors"]
         metadata = cluster_result.get("metadata", pd.DataFrame())
 
         if not correlation.empty and not clusters.empty:
             cluster_count = int(clusters["cluster"].nunique())
+            optimization = cluster_result.get("optimization")
+            if optimization:
+                best = optimization["best"]
+                st.success(
+                    "Applied the best validated solution found in stored data."
+                )
+                metric_columns = st.columns(4)
+                metric_columns[0].metric(
+                    "Recommended clusters",
+                    int(best["cluster_count"]),
+                )
+                metric_columns[1].metric(
+                    "Validation quality",
+                    f"{best['validation_silhouette']:.3f}",
+                    help=(
+                        "Silhouette ranges roughly from -1 to 1; higher means "
+                        "stocks fit their own cluster better than other clusters."
+                    ),
+                )
+                metric_columns[2].metric(
+                    "Fundamentals",
+                    f"{best['fundamental_weight']:.0%}",
+                )
+                metric_columns[3].metric(
+                    "Performance within market score",
+                    f"{best['performance_weight']:.0%}",
+                )
+                st.caption(
+                    f"Training used {optimization['train_dates']} stored dates; "
+                    f"validation used the newest {optimization['validation_dates']} "
+                    f"dates starting "
+                    f"{pd.to_datetime(optimization['split_date']).date()}."
+                )
+                with st.expander("Parameter trials"):
+                    st.dataframe(
+                        round_numeric_frame(optimization["trials"]),
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "objective": st.column_config.NumberColumn(
+                                "Selection score",
+                                format="%.3f",
+                            ),
+                            "train_silhouette": st.column_config.NumberColumn(
+                                "Training quality",
+                                format="%.3f",
+                            ),
+                            "validation_silhouette": st.column_config.NumberColumn(
+                                "Validation quality",
+                                format="%.3f",
+                            ),
+                        },
+                    )
             st.caption(
                 f"Created {cluster_count} clusters from the selected stocks "
                 f"(configured maximum: {cluster_result.get('max_clusters', 12)})."
@@ -2333,14 +2545,19 @@ with tab_clusters:
                     help="The 3D view can be rotated and zoomed.",
                 )
                 max_links = max(1, min(4, cluster_count - 1))
-                links_per_cluster = st.slider(
-                    "Nearest links per cluster",
-                    min_value=1,
-                    max_value=max_links,
-                    value=min(2, max_links),
-                    disabled=cluster_count < 2,
-                    help="Limits connecting lines so the diagram remains readable.",
-                )
+                if max_links == 1:
+                    links_per_cluster = 1
+                    st.caption("Showing the nearest link for each cluster.")
+                else:
+                    links_per_cluster = st.slider(
+                        "Nearest links per cluster",
+                        min_value=1,
+                        max_value=max_links,
+                        value=min(2, max_links),
+                        help=(
+                            "Limits connecting lines so the diagram remains readable."
+                        ),
+                    )
 
             with st.container(border=True):
                 st.subheader("Cluster distance map")
@@ -2361,9 +2578,10 @@ with tab_clusters:
                 )
                 st.caption(
                     "**How to read distance:** distance = 1 − blended similarity. "
-                    f"This run uses {(1 - applied_fundamental_weight) * 80:.0f}% "
+                    f"This run uses "
+                    f"{(1 - applied_fundamental_weight) * (1 - applied_performance_weight) * 100:.0f}% "
                     "return co-movement, "
-                    f"{(1 - applied_fundamental_weight) * 20:.0f}% realized "
+                    f"{(1 - applied_fundamental_weight) * applied_performance_weight * 100:.0f}% realized "
                     "return/risk profile, and "
                     f"{applied_fundamental_weight * 100:.0f}% essential fundamentals. A short "
                     "line means similar movement, performance, and fundamentals. "

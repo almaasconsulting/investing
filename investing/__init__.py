@@ -14,7 +14,9 @@ from .db.store import (
     query_financial_statement_trends,
     query_fundamental_snapshots,
     query_latest_analysis_snapshots,
+    query_stock_news_bulk,
     query_stock_history,
+    query_stock_history_coverage,
     query_stock_histories,
     query_stock_news,
     query_stock_universe,
@@ -27,7 +29,11 @@ from .db.store import (
     save_stock_universe,
 )
 from .core.html_report import generate_watchlist_report
+from .core.cluster_report import generate_cluster_report
+from .core.news_sentiment import score_news_text, summarize_stock_news
+from .core.cluster_optimizer import optimize_stock_clusters, silhouette_score
 from .core.clustering import (
+    agglomerative_cluster_solutions,
     build_close_price_matrix,
     build_stock_similarity,
     cluster_by_correlation,
@@ -74,11 +80,13 @@ __all__ = [
     "save_analysis_snapshots",
     "save_stock_universe",
     "query_stock_history",
+    "query_stock_history_coverage",
     "query_stock_histories",
     "query_stock_news",
     "query_financial_statement_trends",
     "query_fundamental_snapshots",
     "query_latest_analysis_snapshots",
+    "query_stock_news_bulk",
     "query_stock_universe",
     "query_stock_universe_symbols",
     "analyze_stock",
@@ -88,6 +96,12 @@ __all__ = [
     "read_watchlist",
     "write_watchlist",
     "generate_watchlist_report",
+    "generate_cluster_report",
+    "score_news_text",
+    "summarize_stock_news",
+    "optimize_stock_clusters",
+    "silhouette_score",
+    "agglomerative_cluster_solutions",
     "build_close_price_matrix",
     "build_stock_similarity",
     "compute_return_correlation",

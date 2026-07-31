@@ -8,6 +8,7 @@ import pandas as pd
 
 from investing.core.clustering import build_close_price_matrix
 from investing.core.clustering import (
+    agglomerative_cluster_solutions,
     build_stock_similarity,
     cluster_by_correlation,
     cluster_distance_matrix,
@@ -18,6 +19,30 @@ from investing.core.clustering import (
 
 
 class DatabaseClusteringTests(unittest.TestCase):
+    def test_complete_linkage_builds_requested_partition(self) -> None:
+        symbols = ["AAA", "AAB", "BBB", "BBC"]
+        similarity = pd.DataFrame(
+            [
+                [1.0, 0.9, 0.2, 0.1],
+                [0.9, 1.0, 0.1, 0.2],
+                [0.2, 0.1, 1.0, 0.8],
+                [0.1, 0.2, 0.8, 1.0],
+            ],
+            index=symbols,
+            columns=symbols,
+        )
+
+        clusters = agglomerative_cluster_solutions(
+            similarity,
+            [2],
+            linkage="complete",
+        )[2]
+        labels = clusters.set_index("symbol")["cluster"].to_dict()
+
+        self.assertEqual(labels["AAA"], labels["AAB"])
+        self.assertEqual(labels["BBB"], labels["BBC"])
+        self.assertNotEqual(labels["AAA"], labels["BBB"])
+
     @patch("investing.core.clustering.query_stock_histories")
     def test_price_matrix_uses_bulk_stored_history(self, query_histories) -> None:
         query_histories.return_value = pd.DataFrame(

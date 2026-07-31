@@ -82,26 +82,25 @@ def _rank_feature_similarity(
         pd.to_numeric,
         errors="coerce",
     )
-    ranked = prepared.rank(pct=True, method="average")
-    result = pd.DataFrame(
-        np.nan,
+    ranked = prepared.rank(pct=True, method="average").to_numpy(dtype=float)
+    finite = np.isfinite(ranked)
+    common = finite[:, None, :] & finite[None, :, :]
+    difference = np.abs(ranked[:, None, :] - ranked[None, :, :])
+    common_counts = common.sum(axis=2)
+    distance_sums = np.where(common, difference, 0.0).sum(axis=2)
+    distances = np.divide(
+        distance_sums,
+        common_counts,
+        out=np.full(common_counts.shape, np.nan, dtype=float),
+        where=common_counts > 0,
+    )
+    similarities = np.clip(1.0 - distances, 0.0, 1.0)
+    np.fill_diagonal(similarities, 1.0)
+    return pd.DataFrame(
+        similarities,
         index=ordered_symbols,
         columns=ordered_symbols,
-        dtype=float,
     )
-    for index, left in enumerate(ordered_symbols):
-        result.loc[left, left] = 1.0
-        for right in ordered_symbols[index + 1:]:
-            common = ranked.loc[[left, right]].dropna(axis=1)
-            if common.empty:
-                continue
-            distance = float(
-                (common.loc[left] - common.loc[right]).abs().mean()
-            )
-            similarity = float(np.clip(1.0 - distance, 0.0, 1.0))
-            result.loc[left, right] = similarity
-            result.loc[right, left] = similarity
-    return result
 
 
 def compute_performance_similarity(price_matrix: pd.DataFrame) -> pd.DataFrame:
@@ -172,10 +171,13 @@ def build_stock_similarity(
     price_matrix: pd.DataFrame,
     metadata: pd.DataFrame,
     fundamental_weight: float = 0.25,
+    performance_weight: float = 0.20,
 ) -> dict[str, pd.DataFrame]:
     """Blend co-movement, realized performance, and fundamental similarity."""
     if not 0.0 <= fundamental_weight <= 1.0:
         raise ValueError("fundamental_weight must be between 0 and 1")
+    if not 0.0 <= performance_weight <= 1.0:
+        raise ValueError("performance_weight must be between 0 and 1")
     return_correlation = compute_return_correlation(price_matrix)
     if return_correlation.empty:
         return {
@@ -200,7 +202,8 @@ def build_stock_similarity(
     fundamentals = fundamental_similarity.to_numpy(dtype=float)
     market_similarity = np.where(
         np.isfinite(returns) & np.isfinite(performance),
-        0.80 * returns + 0.20 * performance,
+        (1.0 - performance_weight) * returns
+        + performance_weight * performance,
         np.where(np.isfinite(returns), returns, performance),
     )
     combined = np.where(
@@ -219,14 +222,37 @@ def build_stock_similarity(
     }
 
 
-def _consolidate_cluster_members(
+def _agglomerative_group_solutions(
     correlation: pd.DataFrame,
     groups: dict[int, list[str]],
-    max_clusters: int,
-) -> dict[int, list[str]]:
-    """Merge the most similar groups until the requested cap is reached."""
-    if len(groups) <= max_clusters:
-        return groups
+    cluster_counts: Iterable[int],
+    linkage: str = "average",
+) -> dict[int, dict[int, list[str]]]:
+    """Build one linkage hierarchy and capture requested partitions."""
+    if linkage not in {"average", "complete"}:
+        raise ValueError("linkage must be 'average' or 'complete'")
+
+    def pair_score(stats: tuple[float, int]) -> float:
+        return stats[0] / stats[1] if linkage == "average" else stats[0]
+
+    requested = {
+        int(count)
+        for count in cluster_counts
+        if 1 <= int(count) <= len(groups)
+    }
+    if not requested:
+        return {}
+
+    groups = {
+        group_id: sorted(members)
+        for group_id, members in groups.items()
+    }
+    solutions: dict[int, dict[int, list[str]]] = {}
+    if len(groups) in requested:
+        solutions[len(groups)] = {
+            group_id: members.copy()
+            for group_id, members in groups.items()
+        }
 
     symbols = list(correlation.columns)
     position_by_symbol = {
@@ -251,17 +277,24 @@ def _consolidate_cluster_members(
         ]
         finite = values[np.isfinite(values)]
         stats = (
-            float(finite.sum()) if finite.size else 0.0,
-            int(finite.size),
+            (
+                float(finite.sum())
+                if linkage == "average"
+                else float(finite.min())
+            )
+            if finite.size
+            else 0.0,
+            int(finite.size) if linkage == "average" else int(bool(finite.size)),
         )
         pair_stats[(left_id, right_id)] = stats
         if stats[1]:
             heapq.heappush(
                 similarity_heap,
-                (-(stats[0] / stats[1]), left_id, right_id),
+                (-pair_score(stats), left_id, right_id),
             )
 
-    while len(groups) > max_clusters:
+    minimum_count = min(requested)
+    while len(groups) > minimum_count:
         best_pair = None
         while similarity_heap:
             negative_similarity, left_id, right_id = heapq.heappop(
@@ -274,7 +307,7 @@ def _consolidate_cluster_members(
                 and right_id in groups
                 and current is not None
                 and current[1]
-                and np.isclose(-negative_similarity, current[0] / current[1])
+                and np.isclose(-negative_similarity, pair_score(current))
             ):
                 best_pair = pair
                 break
@@ -293,10 +326,25 @@ def _consolidate_cluster_members(
             right_key = tuple(sorted((right_id, other_id)))
             left_total, left_count = pair_stats.get(left_key, (0.0, 0))
             right_total, right_count = pair_stats.get(right_key, (0.0, 0))
-            merged_stats[tuple(sorted((left_id, other_id)))] = (
-                left_total + right_total,
-                left_count + right_count,
-            )
+            if linkage == "average":
+                combined = (
+                    left_total + right_total,
+                    left_count + right_count,
+                )
+            else:
+                available = [
+                    total
+                    for total, count in (
+                        (left_total, left_count),
+                        (right_total, right_count),
+                    )
+                    if count
+                ]
+                combined = (
+                    min(available) if available else 0.0,
+                    int(bool(available)),
+                )
+            merged_stats[tuple(sorted((left_id, other_id)))] = combined
 
         pair_stats = {
             pair: stats
@@ -308,12 +356,93 @@ def _consolidate_cluster_members(
             if count:
                 heapq.heappush(
                     similarity_heap,
-                    (-(total / count), pair[0], pair[1]),
+                    (-pair_score((total, count)), pair[0], pair[1]),
                 )
         groups[left_id] = sorted(groups[left_id] + groups[right_id])
         del groups[right_id]
+        if len(groups) in requested:
+            solutions[len(groups)] = {
+                group_id: members.copy()
+                for group_id, members in groups.items()
+            }
 
-    return groups
+    return solutions
+
+
+def _consolidate_cluster_members(
+    correlation: pd.DataFrame,
+    groups: dict[int, list[str]],
+    max_clusters: int,
+) -> dict[int, list[str]]:
+    """Merge the most similar groups until the requested cap is reached."""
+    if len(groups) <= max_clusters:
+        return groups
+    return _agglomerative_group_solutions(
+        correlation,
+        groups,
+        [max_clusters],
+    )[max_clusters]
+
+
+def _cluster_frame_from_groups(
+    correlation: pd.DataFrame,
+    member_groups: dict[int, list[str]],
+) -> pd.DataFrame:
+    clusters: list[dict] = []
+    for output_cluster_id, source_cluster_id in enumerate(
+        sorted(member_groups),
+        start=1,
+    ):
+        members = member_groups[source_cluster_id]
+        if len(members) > 1:
+            values = [
+                float(correlation.loc[left, right])
+                for left, right in combinations(members, 2)
+                if pd.notna(correlation.loc[left, right])
+            ]
+            average = sum(values) / len(values) if values else 1.0
+        else:
+            average = 1.0
+
+        for symbol in members:
+            clusters.append(
+                {
+                    "cluster": output_cluster_id,
+                    "symbol": symbol,
+                    "members": ", ".join(members),
+                    "average_correlation": average,
+                }
+            )
+    return pd.DataFrame(clusters)
+
+
+def agglomerative_cluster_solutions(
+    similarity: pd.DataFrame,
+    cluster_counts: Iterable[int],
+    linkage: str = "average",
+) -> dict[int, pd.DataFrame]:
+    """Return deterministic average- or complete-linkage partitions."""
+    if similarity.empty:
+        return {}
+    ordered_symbols = sorted(similarity.columns)
+    prepared = similarity.reindex(
+        index=ordered_symbols,
+        columns=ordered_symbols,
+    )
+    initial_groups = {
+        index: [symbol]
+        for index, symbol in enumerate(ordered_symbols, start=1)
+    }
+    group_solutions = _agglomerative_group_solutions(
+        prepared,
+        initial_groups,
+        cluster_counts,
+        linkage=linkage,
+    )
+    return {
+        count: _cluster_frame_from_groups(prepared, groups)
+        for count, groups in group_solutions.items()
+    }
 
 
 def cluster_by_correlation(
@@ -357,30 +486,7 @@ def cluster_by_correlation(
             max_clusters=max_clusters,
         )
 
-    clusters: list[dict] = []
-    for output_cluster_id, source_cluster_id in enumerate(sorted(member_groups), start=1):
-        members = member_groups[source_cluster_id]
-        if len(members) > 1:
-            values = [
-                float(correlation.loc[left, right])
-                for left, right in combinations(members, 2)
-                if pd.notna(correlation.loc[left, right])
-            ]
-            average = sum(values) / len(values) if values else 1.0
-        else:
-            average = 1.0
-
-        for symbol in members:
-            clusters.append(
-                {
-                    "cluster": output_cluster_id,
-                    "symbol": symbol,
-                    "members": ", ".join(members),
-                    "average_correlation": average,
-                }
-            )
-
-    return pd.DataFrame(clusters)
+    return _cluster_frame_from_groups(correlation, member_groups)
 
 
 def correlation_pairs(correlation: pd.DataFrame) -> pd.DataFrame:

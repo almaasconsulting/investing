@@ -694,8 +694,8 @@ def query_stock_histories(
                     ) AS row_rank
                 FROM stock_history h
                 JOIN requested_stock_histories r
-                  ON LOWER(h.ticker) = r.lookup_symbol
-                 AND LOWER(h.country) = r.country
+                  ON h.ticker = r.symbol
+                 AND h.country = r.country
                 WHERE h.date >= CURRENT_DATE - CAST(? AS INTEGER)
                   AND h.close IS NOT NULL
             ) ranked
@@ -705,6 +705,68 @@ def query_stock_histories(
         return con.execute(query, [int(days)]).df()
     finally:
         con.unregister("requested_stock_histories")
+        con.close()
+
+
+def query_stock_history_coverage(
+    stocks: Iterable[tuple[str, str]],
+    days: int = 365,
+    db_path: Path | None = None,
+) -> pd.DataFrame:
+    """Count stored trading dates per requested stock without loading all prices."""
+    requested_rows = []
+    seen: set[tuple[str, str]] = set()
+    for symbol, country in stocks:
+        symbol = str(symbol or "").strip()
+        country = str(country or "norway").strip().lower()
+        identity = (symbol.lower(), country)
+        if not symbol or identity in seen:
+            continue
+        seen.add(identity)
+        requested_rows.append(
+            {
+                "symbol": symbol,
+                "lookup_symbol": symbol.lower(),
+                "country": country,
+            }
+        )
+    if not requested_rows:
+        return pd.DataFrame(
+            columns=["symbol", "country", "observation_count"]
+        )
+    if days < 1:
+        raise ValueError("days must be at least 1")
+
+    con = init_db(db_path)
+    try:
+        con.register(
+            "requested_stock_coverage",
+            pd.DataFrame(requested_rows),
+            column_types={
+                "symbol": "TEXT",
+                "lookup_symbol": "TEXT",
+                "country": "TEXT",
+            },
+        )
+        return con.execute(
+            """
+            SELECT
+                r.symbol,
+                r.country,
+                COUNT(DISTINCT h.date) AS observation_count
+            FROM requested_stock_coverage r
+            JOIN stock_history h
+              ON h.ticker = r.symbol
+             AND h.country = r.country
+            WHERE h.date >= CURRENT_DATE - CAST(? AS INTEGER)
+              AND h.close IS NOT NULL
+            GROUP BY r.symbol, r.country
+            ORDER BY observation_count DESC, r.symbol
+            """,
+            [int(days)],
+        ).df()
+    finally:
+        con.unregister("requested_stock_coverage")
         con.close()
 
 
@@ -1284,6 +1346,110 @@ def query_stock_news(
             [ticker, country, limit],
         ).df()
     finally:
+        con.close()
+
+
+def query_stock_news_bulk(
+    stocks: Iterable[tuple[str, str]],
+    *,
+    limit_per_stock: int = 10,
+    lookback_days: int = 90,
+    db_path: Path | None = None,
+) -> pd.DataFrame:
+    """Return recent stored news for many stocks in one database query."""
+    if limit_per_stock < 1:
+        raise ValueError("limit_per_stock must be at least 1")
+    if lookback_days < 1:
+        raise ValueError("lookback_days must be at least 1")
+
+    requested_rows = []
+    seen: set[tuple[str, str]] = set()
+    for symbol, country in stocks:
+        symbol = str(symbol or "").strip()
+        country = str(country or "").strip().lower()
+        identity = (symbol.lower(), country)
+        if not symbol or not country or identity in seen:
+            continue
+        seen.add(identity)
+        requested_rows.append(
+            {
+                "symbol": symbol,
+                "lookup_symbol": symbol.upper(),
+                "country": country,
+            }
+        )
+    columns = [
+        "symbol",
+        "country",
+        "article_id",
+        "published_at",
+        "title",
+        "summary",
+        "url",
+        "publisher",
+        "provider",
+    ]
+    if not requested_rows:
+        return pd.DataFrame(columns=columns)
+
+    con = init_db(db_path)
+    try:
+        relation = (
+            "gold.fact_stock_news"
+            if _table_exists(con, "gold", "fact_stock_news")
+            else "news_article_landing"
+        )
+        con.register(
+            "requested_stock_news",
+            pd.DataFrame(requested_rows),
+            column_types={
+                "symbol": "TEXT",
+                "lookup_symbol": "TEXT",
+                "country": "TEXT",
+            },
+        )
+        return con.execute(
+            f"""
+            SELECT symbol, country, article_id, published_at, title, summary,
+                   url, publisher, provider
+            FROM (
+                SELECT deduplicated.*, ROW_NUMBER() OVER (
+                    PARTITION BY symbol, country
+                    ORDER BY published_at DESC NULLS LAST, fetched_at DESC
+                ) AS news_rank
+                FROM (
+                    SELECT
+                        r.symbol,
+                        r.country,
+                        n.article_id,
+                        n.published_at,
+                        n.title,
+                        n.summary,
+                        n.url,
+                        n.publisher,
+                        n.provider,
+                        n.fetched_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.symbol, r.country, n.article_id
+                            ORDER BY n.fetched_at DESC
+                        ) AS article_rank
+                    FROM {relation} n
+                    JOIN requested_stock_news r
+                      ON UPPER(n.ticker) = r.lookup_symbol
+                     AND LOWER(n.country) = r.country
+                    WHERE COALESCE(n.published_at, n.fetched_at)
+                          >= CURRENT_TIMESTAMP
+                             - CAST(? AS INTEGER) * INTERVAL '1 day'
+                ) deduplicated
+                WHERE article_rank = 1
+            ) ranked
+            WHERE news_rank <= ?
+            ORDER BY country, symbol, published_at DESC NULLS LAST
+            """,
+            [int(lookback_days), int(limit_per_stock)],
+        ).df()
+    finally:
+        con.unregister("requested_stock_news")
         con.close()
 
 
